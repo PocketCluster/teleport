@@ -622,7 +622,7 @@ func (tc *TeleportClient) Play(sessionId string) (err error) {
 }
 
 // SCP securely copies file(s) from one SSH server to another
-func (tc *TeleportClient) SCP(args []string, port int, recursive bool) (err error) {
+func (tc *TeleportClient) SCP(args []string, port int, recursive bool, quiet bool) (err error) {
 	if len(args) < 2 {
 		return trace.Errorf("Need at least two arguments for scp")
 	}
@@ -637,7 +637,7 @@ func (tc *TeleportClient) SCP(args []string, port int, recursive bool) (err erro
 	if !tc.Config.ProxySpecified() {
 		return trace.BadParameter("proxy server is not specified")
 	}
-	log.Infof("Connecting to proxy...")
+	log.Infof("Connecting to proxy to copy (recursively=%v)...", recursive)
 	proxyClient, err := tc.ConnectToProxy()
 	if err != nil {
 		return trace.Wrap(err)
@@ -652,6 +652,11 @@ func (tc *TeleportClient) SCP(args []string, port int, recursive bool) (err erro
 			return nil, trace.Wrap(err)
 		}
 		return proxyClient.ConnectToNode(addr+"@"+siteInfo.Name, tc.HostLogin, false)
+	}
+
+	var progressWriter io.Writer
+	if !quiet {
+		progressWriter = tc.Stdout
 	}
 
 	// gets called to convert SSH error code to tc.ExitStatus
@@ -676,11 +681,10 @@ func (tc *TeleportClient) SCP(args []string, port int, recursive bool) (err erro
 		}
 		// copy everything except the last arg (that's destination)
 		for _, src := range args[:len(args)-1] {
-			err = client.Upload(src, dest, tc.Stderr)
+			err = client.Upload(src, dest, recursive, tc.Stderr, progressWriter)
 			if err != nil {
 				return onError(err)
 			}
-			fmt.Printf("Uploaded %s\n", src)
 		}
 		// download:
 	} else {
@@ -695,11 +699,10 @@ func (tc *TeleportClient) SCP(args []string, port int, recursive bool) (err erro
 		}
 		// copy everything except the last arg (that's destination)
 		for _, dest := range args[1:] {
-			err = client.Download(src, dest, recursive, tc.Stderr)
+			err = client.Download(src, dest, recursive, tc.Stderr, progressWriter)
 			if err != nil {
 				return onError(err)
 			}
-			fmt.Printf("Downloaded %s\n", src)
 		}
 	}
 	return nil
