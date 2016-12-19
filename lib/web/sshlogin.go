@@ -196,7 +196,11 @@ func SSHAgentLogin(proxyAddr, user, password, hotpToken string, pubKey []byte, t
 	return out, nil
 }
 
+// initClient creates and initializes HTTPS client for talking to teleport proxy HTTPS
+// endpoint.
 func initClient(proxyAddr string, insecure bool, pool *x509.CertPool) (*webClient, *url.URL, error) {
+	log.Debugf("HTTPS client init(insecure=%v)", insecure)
+
 	// validate proxyAddr:
 	host, port, err := net.SplitHostPort(proxyAddr)
 	if err != nil || host == "" || port == "" {
@@ -213,13 +217,13 @@ func initClient(proxyAddr string, insecure bool, pool *x509.CertPool) (*webClien
 
 	var opts []roundtrip.ClientParam
 
-	if pool != nil {
-		// use custom set of trusted CAs
-		opts = append(opts, roundtrip.HTTPClient(newClientWithPool(pool)))
-	} else if insecure {
+	if insecure {
 		// skip https cert verification, oh no!
 		fmt.Printf("WARNING: You are using insecure connection to SSH proxy %v\n", proxyAddr)
 		opts = append(opts, roundtrip.HTTPClient(newInsecureClient()))
+	} else if pool != nil {
+		// use custom set of trusted CAs
+		opts = append(opts, roundtrip.HTTPClient(newClientWithPool(pool)))
 	}
 
 	clt, err := newWebClient(proxyAddr, opts...)

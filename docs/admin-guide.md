@@ -203,7 +203,9 @@ teleport:
 
 # This section configures the 'auth service':
 auth_service:
+    # Turns 'auth' role on. Default is 'yes'
     enabled: yes
+
     # IP and the port to bind to. Other Teleport nodes will be connecting to
     # this port (AKA "Auth API" or "Cluster API") to validate client 
     # certificates 
@@ -232,7 +234,9 @@ auth_service:
 
 # This section configures the 'node service':
 ssh_service:
+    # Turns 'ssh' role on. Default is 'yes'
     enabled: yes
+
     # IP and the port for SSH service to bind to. 
     listen_addr: 0.0.0.0:3022
     # See explanation of labels in "Labeling Nodes" section below
@@ -252,7 +256,9 @@ ssh_service:
 
 # This section configures the 'proxy servie'
 proxy_service:
+    # Turns 'proxy' role on. Default is 'yes'
     enabled: yes
+
     # SSH forwarding/proxy address. Command line (CLI) clients always begin their
     # SSH sessions by connecting to this port
     listen_addr: 0.0.0.0:3023
