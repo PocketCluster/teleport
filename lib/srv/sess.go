@@ -426,8 +426,16 @@ type sessionRecorder struct {
 
 // Write takes a chunk and writes it into the audit log
 func (r *sessionRecorder) Write(data []byte) (int, error) {
-	if err := r.alog.PostSessionChunk(r.sid, bytes.NewReader(data)); err != nil {
-		return 0, trace.Wrap(err)
+	// we are copying buffer to prevent data corruption:
+	// io.Copy allocates single buffer and calls multiple writes in a loop
+	// our PostSessionChunk is async and sends reader wrapping buffer
+	// to the channel. This can lead to cases when the buffer is re-used
+	// and data is corrupted unless we copy the data buffer in the first place
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+	// post the chunk of bytes to the audit log:
+	if err := r.alog.PostSessionChunk(r.sid, bytes.NewReader(dataCopy)); err != nil {
+		log.Error(trace.DebugReport(err))
 	}
 	return len(data), nil
 }
