@@ -208,7 +208,7 @@ func (t *proxySubsys) proxyToHost(site reversetunnel.RemoteSite, ch ssh.Channel)
 	// may not be actually DNS resolvable
 	conn, err := site.Dial("tcp", serverAddr)
 	if err != nil {
-		return trace.ConvertSystemError(err)
+		return trace.Wrap(err)
 	}
 	go func() {
 		var err error

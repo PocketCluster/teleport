@@ -1,4 +1,4 @@
-# Update this variable, then run 'make setver'
+# Update this variable, then run 'make'
 # Naming convention:
 #	for stable releases we use "1.0.0" format
 #   for pre-releases, we use   "1.0.0-beta.2" format
@@ -21,23 +21,20 @@ export
 
 $(eval BUILDFLAGS := $(ADDFLAGS) -ldflags '-w -s')
 
-# TODO: remove this target
-ev:
-	$(MAKE) teleport
+VERSRC = version.go gitref.go
+LIBS = $(shell find lib -type f -name '*.go') *.go
 
 #
 # Default target: builds all 3 executables and plaaces them in a current directory
 #
 .PHONY: all
-all: setver teleport tctl tsh assets
-	cp -f build.assets/release.mk $(BUILDDIR)/Makefile
+all: $(VERSRC) $(BINARIES)
 
 .PHONY: tctl
 tctl: 
 	go build -o $(BUILDDIR)/tctl -i $(BUILDFLAGS) ./tool/tctl
 
-.PHONY: teleport 
-teleport:
+$(BUILDDIR)/teleport: $(LIBS) tool/teleport/*.go
 	go build -o $(BUILDDIR)/teleport -i $(BUILDFLAGS) ./tool/teleport
 
 .PHONY: tsh
@@ -109,13 +106,9 @@ test:
 integration: 
 	go test -v ./integration/...
 
-
-# make setver - bump the version of teleport
-#	Reads the version from version.mk, updates version.go and
-#	assigns a git tag to the currently checked out tree
-.PHONY: setver
-setver:
-	$(MAKE) -f version.mk setver
+# This rule triggers re-generation of version.go and gitref.go if Makefile changes
+$(VERSRC): Makefile
+	VERSION=$(VERSION) $(MAKE) -f version.mk setver
 
 # make tag - prints a tag to use with git for the current version
 # 	To put a new release on Github:
