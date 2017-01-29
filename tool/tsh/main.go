@@ -190,7 +190,7 @@ func onLogin(cf *CLIConf) {
 	if err != nil {
 		utils.FatalError(err)
 	}
-	if err := tc.Login(); err != nil {
+	if _, err := tc.Login(); err != nil {
 		utils.FatalError(err)
 	} else {
 		// successful login? update the profile then:

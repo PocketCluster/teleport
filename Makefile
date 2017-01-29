@@ -73,6 +73,7 @@ assets:
 	cp web/dist/index.html $(BUILDDIR)
 	cp README.md $(BUILDDIR)
 
+
 #
 # Builds docs using containerized mkdocs
 #
