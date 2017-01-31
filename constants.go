@@ -54,4 +54,30 @@ const (
 	// SafeTerminalType is the fall-back TTY type to fall back to (when $TERM
 	// is not defined)
 	SafeTerminalType = "xterm"
+
+	// ConnectorOIDC means connector type OIDC
+	ConnectorOIDC = "oidc"
+
+	// DataDirParameterName is the name of the data dir configuration parameter passed
+	// to all backends during initialization
+	DataDirParameterName = "data_dir"
+
+	// SSH request type to keep the connection alive. A client and a server keep
+	// pining each other with it:
+	KeepAliveReqType = "keepalive@openssh.com"
+
+	// OTP means One-time Password Algorithm.
+	OTP = "otp"
+
+	// TOTP means Time-based One-time Password Algorithm.
+	TOTP = "totp"
+
+	// HOTP means HMAC-based One-time Password Algorithm.
+	HOTP = "hotp"
+
+	// U2F means Universal 2nd Factor.
+	U2F = "u2f"
+
+	// OIDC means OpenID Connect.
+	OIDC = "oidc"
 )
