@@ -61,6 +61,18 @@ func (s *UtilsSuite) TestRandomDuration(c *check.C) {
 	}
 }
 
+func (s *UtilsSuite) TestMiscFunctions(c *check.C) {
+	// SliceContainsStr
+	c.Assert(SliceContainsStr([]string{"two", "one"}, "one"), check.Equals, true)
+	c.Assert(SliceContainsStr([]string{"two", "one"}, "five"), check.Equals, false)
+	c.Assert(SliceContainsStr([]string(nil), "one"), check.Equals, false)
+
+	// Deduplicate
+	c.Assert(Deduplicate([]string{}), check.DeepEquals, []string{})
+	c.Assert(Deduplicate([]string{"a", "b"}), check.DeepEquals, []string{"a", "b"})
+	c.Assert(Deduplicate([]string{"a", "b", "b", "a", "c"}), check.DeepEquals, []string{"a", "b", "c"})
+}
+
 func (s *UtilsSuite) TestGetShell(c *check.C) {
 	shell, err := GetLoginShell("root")
 	c.Assert(err, check.IsNil)

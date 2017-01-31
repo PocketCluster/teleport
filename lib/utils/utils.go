@@ -162,6 +162,32 @@ func PrintVersion() {
 	fmt.Println(ver)
 }
 
+// Deduplicate deduplicates list of strings
+func Deduplicate(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, val := range in {
+		if _, ok := seen[val]; !ok {
+			out = append(out, val)
+			seen[val] = true
+		}
+	}
+	return out
+}
+
+// SliceContainsStr returns 'true' if the slice contains the given value
+func SliceContainsStr(slice []string, value string) bool {
+	for i := range slice {
+		if slice[i] == value {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	// CertTeleportUser specifies teleport user
 	CertTeleportUser = "x-teleport-user"

@@ -191,7 +191,8 @@ func (t *proxySubsys) proxyToHost(site reversetunnel.RemoteSite, ch ssh.Channel)
 	for i := range servers {
 		ip, port, err := net.SplitHostPort(servers[i].Addr)
 		if err != nil {
-			return trace.Wrap(err)
+			log.Error(err)
+			continue
 		}
 
 		// match either by hostname of ip, based on the match
