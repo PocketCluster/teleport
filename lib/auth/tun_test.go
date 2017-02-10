@@ -80,7 +80,7 @@ func (s *TunSuite) SetUpTest(c *C) {
 
 	hpriv, hpub, err := s.a.GenerateKeyPair("")
 	c.Assert(err, IsNil)
-	hcert, err := s.a.GenerateHostCert(hpub, "localhost", "localhost", teleport.Roles{teleport.RoleNode}, 0)
+	hcert, err := s.a.GenerateHostCert(hpub, "00000000-0000-0000-0000-000000000000", "localhost", "localhost", teleport.Roles{teleport.RoleNode}, 0)
 	c.Assert(err, IsNil)
 
 	signer, err := sshutils.NewSigner(hpriv, hcert)
