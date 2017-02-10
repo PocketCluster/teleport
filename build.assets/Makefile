@@ -30,8 +30,10 @@ bbox:
 .PHONY:test
 test: integration
 	docker run $(DOCKERFLAGS) $(NOROOT) -t $(BBOX) \
-		/bin/bash -c "$(MAKE) -C $(SRCDIR) TELEPORT_DEBUG=1 FLAGS='-cover -race' clean test"
-
+		/bin/bash -c \
+		"examples/etcd/start-etcd.sh & sleep 1; \
+		ssh-agent > external.agent && source external.agent; \
+		cd $(SRCDIR) && make TELEPORT_DEBUG=0 FLAGS='-cover -race' clean test"
 
 .PHONY:integration
 integration: bbox
