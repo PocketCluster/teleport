@@ -7,6 +7,10 @@ import (
 // ForeverTTL means that object TTL will not expire unless deleted
 const ForeverTTL time.Duration = 0
 
+// SSHAuthSock is the environment variable pointing to the
+// Unix socket the SSH agent is running on.
+const SSHAuthSock = "SSH_AUTH_SOCK"
+
 const (
 	// SQLiteBackendType is a SQLite backend
 	SQLiteBackendType = "sqlite"
@@ -16,6 +20,12 @@ const (
 
 	// ETCDBackendType is etcd backend
 	ETCDBackendType = "etcd"
+
+	// TOTPValidityPeriod is the number of seconds a TOTP token is valid.
+	TOTPValidityPeriod uint = 30
+
+	// TOTPSkew adds that many periods before and after to the validity window.
+	TOTPSkew uint = 1
 
 	// Component indicates a component of teleport, used for logging
 	Component = "component"
