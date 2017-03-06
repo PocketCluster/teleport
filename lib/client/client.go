@@ -118,10 +118,7 @@ func (proxy *ProxyClient) GetSites() ([]services.Site, error) {
 //
 // A server is matched when ALL labels match.
 // If no labels are passed, ALL nodes are returned.
-func (proxy *ProxyClient) FindServersByLabels(ctx context.Context, namespace string, labels map[string]string) ([]services.Server, error) {
-	if namespace == "" {
-		return nil, trace.BadParameter("missing parameter namespace")
-	}
+func (proxy *ProxyClient) FindServersByLabels(ctx context.Context, labels map[string]string) ([]services.Server, error) {
 	nodes := make([]services.Server, 0)
 	site, err := proxy.ConnectToSite(ctx, false)
 	if err != nil {

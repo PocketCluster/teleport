@@ -375,7 +375,7 @@ func (tc *TeleportClient) getTargetNodes(ctx context.Context, proxy *ProxyClient
 		retval = make([]string, 0)
 	)
 	if tc.Labels != nil && len(tc.Labels) > 0 {
-		nodes, err = proxy.FindServersByLabels(ctx, tc.Namespace, tc.Labels)
+		nodes, err = proxy.FindServersByLabels(ctx, tc.Labels)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -424,7 +424,7 @@ func (tc *TeleportClient) SSH(ctx context.Context, command []string, runLocally 
 	}
 	nodeClient, err := proxyClient.ConnectToNode(
 		ctx,
-		nodeAddrs[0]+"@"+tc.Namespace+"@"+siteInfo.Name,
+		nodeAddrs[0]+"@"+siteInfo.Name,
 		tc.Config.HostLogin,
 		false)
 	if err != nil {
@@ -663,7 +663,7 @@ func (tc *TeleportClient) SCP(ctx context.Context, args []string, port int, recu
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-		return proxyClient.ConnectToNode(ctx, addr+"@"+tc.Namespace+"@"+siteInfo.Name, tc.HostLogin, false)
+		return proxyClient.ConnectToNode(ctx, addr+"@"+siteInfo.Name, tc.HostLogin, false)
 	}
 
 	var progressWriter io.Writer
@@ -755,7 +755,7 @@ func (tc *TeleportClient) ListNodes(ctx context.Context) ([]services.Server, err
 	}
 
 	defer proxyClient.Close()
-	return proxyClient.FindServersByLabels(ctx, tc.Namespace, tc.Labels)
+	return proxyClient.FindServersByLabels(ctx, tc.Labels)
 }
 
 // runCommand executes a given bash command on a bunch of remote nodes
@@ -773,7 +773,7 @@ func (tc *TeleportClient) runCommand(
 				resultsC <- err
 			}()
 			var nodeClient *NodeClient
-			nodeClient, err = proxyClient.ConnectToNode(ctx, address+"@"+tc.Namespace+"@"+siteName, tc.Config.HostLogin, false)
+			nodeClient, err = proxyClient.ConnectToNode(ctx, address+"@"+siteName, tc.Config.HostLogin, false)
 			if err != nil {
 				fmt.Fprintln(tc.Stderr, err)
 				return
