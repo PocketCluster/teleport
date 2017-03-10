@@ -451,10 +451,7 @@ func (tc *TeleportClient) startPortForwarding(nodeClient *NodeClient) error {
 }
 
 // Join connects to the existing/active SSH session
-func (tc *TeleportClient) Join(ctx context.Context, namespace string, sessionID session.ID, input io.Reader) (err error) {
-	if namespace == "" {
-		return trace.BadParameter("missing parameter namespace")
-	}
+func (tc *TeleportClient) Join(ctx context.Context, sessionID session.ID, input io.Reader) (err error) {
 	tc.Stdin = input
 	if sessionID.Check() != nil {
 		return trace.Errorf("Invalid session ID format: %s", string(sessionID))
@@ -531,10 +528,7 @@ func (tc *TeleportClient) Join(ctx context.Context, namespace string, sessionID 
 }
 
 // Play replays the recorded session
-func (tc *TeleportClient) Play(ctx context.Context, namespace, sessionId string) (err error) {
-	if namespace == "" {
-		return trace.BadParameter("missing parameter namespace")
-	}
+func (tc *TeleportClient) Play(ctx context.Context, sessionId string) (err error) {
 	sid, err := session.ParseID(sessionId)
 	if err != nil {
 		return fmt.Errorf("'%v' is not a valid session ID (must be GUID)", sid)

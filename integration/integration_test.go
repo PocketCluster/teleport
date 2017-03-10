@@ -311,7 +311,7 @@ func (s *IntSuite) TestInteractive(c *check.C) {
 		c.Assert(err, check.IsNil)
 		cl.Stdout = &personB
 		for i := 0; i < 10; i++ {
-			err = cl.Join(context.TODO(), defaults.Namespace, session.ID(sessionID), &personB)
+			err = cl.Join(context.TODO(), session.ID(sessionID), &personB)
 			if err == nil {
 				break
 			}
@@ -426,7 +426,7 @@ func (s *IntSuite) TestTwoSites(c *check.C) {
 	// Stop "site-A" and try to connect to it again via "site-A" (expect a connection error)
 	a.Stop(false)
 	err = tc.SSH(context.TODO(), cmd, false)
-	c.Assert(err, check.ErrorMatches, `failed connecting to node localhost. site-A is offline`)
+	c.Assert(err, check.ErrorMatches, `.*failed connecting to node localhost.*`)
 
 	// Reset and start "Site-A" again
 	a.Reset()

@@ -14,6 +14,10 @@ import (
     "github.com/mailgun/timetools"
 )
 
+const (
+    pcTablePrefix = "pcssh_"
+)
+
 //region Helper Structure & Functions
 type keyValueMeta struct {
     Table      string
@@ -41,6 +45,26 @@ func concatErrors(errs... error) error {
         }
     }
     return err
+}
+
+func convertTableName(tables []string) ([]string, error) {
+    var (
+        newTables []string
+    )
+    if tables == nil || len(tables) == 0 {
+        return nil, fmt.Errorf("No table name to convert for backend")
+    }
+    for _, tbl := range tables {
+        newTables = append(newTables, pcTablePrefix + tbl)
+    }
+    return newTables, nil
+}
+
+func appendTable(tables []string, tbl string) []string {
+    if tables == nil || len(tables) == 0 {
+        return []string{pcTablePrefix + tbl}
+    }
+    return append(tables, pcTablePrefix + tbl)
 }
 
 // check if every table in the list exits
@@ -348,11 +372,15 @@ func (sb *SQLiteBackend) Close() error {
 }
 
 // GetKeys returns a list of keys for a given path
-func (sb *SQLiteBackend) GetKeys(tables []string) ([]string, error) {
+func (sb *SQLiteBackend) GetKeys(bucket []string) ([]string, error) {
     var (
-        keys []string
+        keys, tables []string
         err error = nil
     )
+    tables, err = convertTableName(bucket)
+    if err != nil {
+        return nil, trace.Wrap(err)
+    }
     err = checkTablesExist(sb, tables)
     if err != nil {
         if trace.IsNotFound(err) {
@@ -366,7 +394,7 @@ func (sb *SQLiteBackend) GetKeys(tables []string) ([]string, error) {
     }
     // now do an iteration to expire keys
     for _, key := range keys {
-        sb.GetVal(tables, key)
+        sb.GetVal(bucket, key)
     }
     // Here, we'll imitate the behavior of the original b.getKeys().
     // Get the last table and collect all the valid keys in the table
@@ -380,20 +408,25 @@ func (sb *SQLiteBackend) GetKeys(tables []string) ([]string, error) {
 }
 
 // GetVal return a value for a given key in the bucket
-func (sb *SQLiteBackend) GetVal(tables []string, key string) ([]byte, error) {
+func (sb *SQLiteBackend) GetVal(bucket []string, key string) ([]byte, error) {
     var (
         pruned int      = 0
         err, derr error = nil, nil
+        tables []string
         values []*keyValueMeta
         last *keyValueMeta
     )
+    tables, err = convertTableName(bucket)
+    if err != nil {
+        return nil, trace.Wrap(err)
+    }
     err = checkTablesExist(sb, tables)
     if err != nil {
         return nil, trace.Wrap(err)
     }
     values, err = getValuesForKey(sb, tables, key)
     if err != nil {
-        perr := checkTablesExist(sb, append(tables, key))
+        perr := checkTablesExist(sb, appendTable(tables, key))
         if perr == nil {
             return nil, trace.BadParameter("key '%v 'is a table name", key)
         }
@@ -412,7 +445,7 @@ func (sb *SQLiteBackend) GetVal(tables []string, key string) ([]byte, error) {
         }
     }
     if pruned == len(values) {
-        return nil, trace.NotFound("%v: %v not found", tables, key)
+        return nil, trace.NotFound("%v: %v not found", bucket, key)
     }
     if err != nil {
         return nil, err
@@ -423,21 +456,26 @@ func (sb *SQLiteBackend) GetVal(tables []string, key string) ([]byte, error) {
 }
 
 // GetValAndTTL returns value and TTL for a key in bucket
-func (sb *SQLiteBackend) GetValAndTTL(tables []string, key string) ([]byte, time.Duration, error) {
+func (sb *SQLiteBackend) GetValAndTTL(bucket []string, key string) ([]byte, time.Duration, error) {
     var (
         pruned int              = 0
         err, derr error         = nil, nil
         newTTL time.Duration    = 0
+        tables []string
         values []*keyValueMeta
         last *keyValueMeta
     )
+    tables, err = convertTableName(bucket)
+    if err != nil {
+        return nil, 0, trace.Wrap(err)
+    }
     err = checkTablesExist(sb, tables)
     if err != nil {
         return nil, 0, trace.Wrap(err)
     }
     values, err = getValuesForKey(sb, tables, key)
     if err != nil {
-        perr := checkTablesExist(sb, append(tables, key))
+        perr := checkTablesExist(sb, appendTable(tables, key))
         if perr == nil {
             return nil, 0, trace.BadParameter("key '%v 'is a table name", key)
         }
@@ -454,7 +492,7 @@ func (sb *SQLiteBackend) GetValAndTTL(tables []string, key string) ([]byte, time
         }
     }
     if pruned == len(values) {
-        return nil, 0, trace.NotFound("%v: %v not found", tables, key)
+        return nil, 0, trace.NotFound("%v: %v not found", bucket, key)
     }
     if err != nil {
         return nil, 0, trace.Wrap(err)
@@ -469,11 +507,16 @@ func (sb *SQLiteBackend) GetValAndTTL(tables []string, key string) ([]byte, time
 
 // CreateVal creates value with a given TTL and key in the bucket
 // if the value already exists, returns AlreadyExistsError
-func (sb *SQLiteBackend) CreateVal(tables []string, key string, val []byte, ttl time.Duration) error {
+func (sb *SQLiteBackend) CreateVal(bucket []string, key string, val []byte, ttl time.Duration) error {
     var (
+        tables []string
         values []*keyValueMeta  = nil
         err error               = nil
     )
+    tables, err = convertTableName(bucket)
+    if err != nil {
+        return trace.Wrap(err)
+    }
     err = upsertTables(sb, tables)
     if err != nil {
         return trace.Wrap(err)
@@ -490,18 +533,23 @@ func (sb *SQLiteBackend) CreateVal(tables []string, key string, val []byte, ttl 
 }
 
 // TouchVal updates the TTL of the key without changing the value
-func (sb *SQLiteBackend) TouchVal(tables []string, key string, ttl time.Duration) error {
+func (sb *SQLiteBackend) TouchVal(bucket []string, key string, ttl time.Duration) error {
     var (
+        tables []string
         values []*keyValueMeta
         err, uerr error         = nil, nil
     )
+    tables, err = convertTableName(bucket)
+    if err != nil {
+        return trace.Wrap(err)
+    }
     err = upsertTables(sb, tables)
     if err != nil {
         return trace.Wrap(err)
     }
     values, err = getValuesForKey(sb, tables, key)
     if err != nil {
-        perr := checkTablesExist(sb, append(tables, key))
+        perr := checkTablesExist(sb, appendTable(tables, key))
         if perr == nil {
             return trace.BadParameter("key '%v 'is a table name", key)
         }
@@ -522,8 +570,16 @@ func (sb *SQLiteBackend) TouchVal(tables []string, key string, ttl time.Duration
 
 // UpsertVal updates or inserts value with a given TTL into a bucket
 // ForeverTTL for no TTL
-func (sb *SQLiteBackend) UpsertVal(tables []string, key string, val []byte, ttl time.Duration) error {
-    err := upsertTables(sb, tables)
+func (sb *SQLiteBackend) UpsertVal(bucket []string, key string, val []byte, ttl time.Duration) error {
+    var (
+        tables []string
+        err error
+    )
+    tables, err = convertTableName(bucket)
+    if err != nil {
+        return trace.Wrap(err)
+    }
+    err = upsertTables(sb, tables)
     if err != nil {
         return trace.Wrap(err)
     }
@@ -535,11 +591,18 @@ func (sb *SQLiteBackend) UpsertVal(tables []string, key string, val []byte, ttl 
 }
 
 // DeleteKey deletes a key in a bucket
-func (sb *SQLiteBackend) DeleteKey(tables []string, key string) error {
+func (sb *SQLiteBackend) DeleteKey(bucket []string, key string) error {
     sb.Lock()
     defer sb.Unlock()
-
-    err := checkTablesExist(sb, tables)
+    var (
+        tables []string
+        err error
+    )
+    tables, err = convertTableName(bucket)
+    if err != nil {
+        return trace.Wrap(err)
+    }
+    err = checkTablesExist(sb, tables)
     if err != nil {
         return trace.Wrap(err)
     }
@@ -555,15 +618,22 @@ func (sb *SQLiteBackend) DeleteKey(tables []string, key string) error {
 }
 
 // DeleteBucket deletes the bucket by a given path
-func (sb *SQLiteBackend) DeleteBucket(tables []string, bucket string) error {
+func (sb *SQLiteBackend) DeleteBucket(bucket []string, bkt string) error {
     sb.Lock()
     defer sb.Unlock()
-
-    err := checkTablesExist(sb, tables)
+    var (
+        tables []string
+        err error
+    )
+    tables, err = convertTableName(bucket)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = deleteTables(sb, []string{bucket})
+    err = checkTablesExist(sb, tables)
+    if err != nil {
+        return trace.Wrap(err)
+    }
+    err = deleteTables(sb, []string{pcTablePrefix + bkt})
     if err != nil {
         return trace.Wrap(err)
     }
@@ -604,11 +674,18 @@ func (sb *SQLiteBackend) ReleaseLock(token string) error {
 }
 
 // CompareAndSwap implements compare ans swap operation for a key
-func (sb *SQLiteBackend) CompareAndSwap(tables []string, key string, val []byte, ttl time.Duration, prevVal []byte) ([]byte, error) {
+func (sb *SQLiteBackend) CompareAndSwap(bucket []string, key string, val []byte, ttl time.Duration, prevVal []byte) ([]byte, error) {
     sb.Lock()
     defer sb.Unlock()
-
-    storedVal, err := sb.GetVal(tables, key)
+    var (
+        tables []string
+        err error
+    )
+    tables, err = convertTableName(bucket)
+    if err != nil {
+        return nil, trace.Wrap(err)
+    }
+    storedVal, err := sb.GetVal(bucket, key)
     if err != nil && trace.IsNotFound(err) && len(prevVal) != 0 {
         return nil, err
     }
