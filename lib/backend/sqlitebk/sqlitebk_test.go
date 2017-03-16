@@ -66,3 +66,7 @@ func (s *SqliteSuite) TestLock(c *C) {
 func (s *SqliteSuite) TestValueAndTTL(c *C) {
     s.suite.ValueAndTTl(c)
 }
+
+func (s *SqliteSuite) TestDuplicatedKeys(c *C) {
+    s.suite.DuplicatedKeysInBuckets(c)
+}

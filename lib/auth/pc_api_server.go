@@ -10,7 +10,6 @@ import (
     "github.com/gravitational/trace"
 
     "github.com/julienschmidt/httprouter"
-    "github.com/stkim1/pcrypto"
 )
 
 const (
@@ -23,32 +22,19 @@ const (
     PocketSignupToken string    = "token"
 )
 
-// APIServer implements http API server for AuthServer interface
-type PocketAPIServer struct {
-    httprouter.Router
-    ar *PocketAuthWithRoles
-}
-
-// NewAPIServer returns a new instance of APIServer HTTP handler
-func NewPocketAPIServer(config *APIConfig, caSigner *pcrypto.CaSigner, role teleport.Role, notFound http.HandlerFunc) PocketAPIServer {
-    srv := PocketAPIServer{
-        ar: &PocketAuthWithRoles {
-            AuthWithRoles: &AuthWithRoles {
-                authServer:     config.AuthServer,
-                permChecker:    config.PermissionChecker,
-                sessions:       config.SessionService,
-                role:           role,
-                alog:           config.AuditLog,
-            },
-            caSigner:           caSigner,
-        },
+// Enhances API server for pocket API
+func enhanceWithPocketAPI(srv *APIServer, config *APIConfig) {
+    // (03/11/2017)
+    // certSigner is added to issue various types of other certs.
+    // We'll later replace it with an enhanced cert manager.
+    // Also, it is pointless to add additional APIs without cert signer.
+    if config.CertSigner == nil {
+        return
     }
-    srv.Router   = *httprouter.New()
-    srv.NotFound = notFound
+    srv.certSigner = config.CertSigner
 
     srv.POST(fmt.Sprintf("/%s/%s/%s", PocketApiVersion, PocketCertificate, PocketRequestSigned), httplib.MakeHandler(srv.issueSignedCertificatewithToken))
     srv.POST(fmt.Sprintf("/%s/%s/%s", PocketApiVersion, PocketUserSignup, PocketSignupToken), httplib.MakeHandler(srv.releaseSignupToken))
-    return srv
 }
 
 type signedCertificateReq struct {
@@ -59,12 +45,15 @@ type signedCertificateReq struct {
     Role     teleport.Role `json:"role"`
 }
 
-func (s *PocketAPIServer) issueSignedCertificatewithToken(w http.ResponseWriter, r *http.Request, _ httprouter.Params) (interface{}, error) {
+func (s *APIServer) issueSignedCertificatewithToken(w http.ResponseWriter, r *http.Request, _ httprouter.Params) (interface{}, error) {
     var req *signedCertificateReq
     if err := httplib.ReadJSON(r, &req); err != nil {
         return nil, trace.Wrap(err)
     }
-    keys, err := s.ar.issueSignedCertificateWithToken(req)
+    if s.certSigner == nil {
+        return nil, trace.Wrap(fmt.Errorf("Cannot issue certificates with null signer"))
+    }
+    keys, err := s.a.issueSignedCertificateWithToken(s.certSigner, req)
     if err != nil {
         return nil, trace.Wrap(err)
     }
@@ -77,12 +66,12 @@ type signupTokenReq struct {
     SignupToken    string    `json:"signuptoken"`
 }
 
-func (s *PocketAPIServer) releaseSignupToken(w http.ResponseWriter, r *http.Request, _ httprouter.Params) (interface{}, error) {
+func (s *APIServer) releaseSignupToken(w http.ResponseWriter, r *http.Request, _ httprouter.Params) (interface{}, error) {
     var req *signupTokenReq
     if err := httplib.ReadJSON(r, &req); err != nil {
         return nil, trace.Wrap(err)
     }
-    tokenData, err := s.ar.releaseSignupToken(req.SignupToken)
+    tokenData, err := s.a.releaseSignupToken(req.SignupToken)
     if err != nil {
         return nil, trace.Wrap(err)
     }

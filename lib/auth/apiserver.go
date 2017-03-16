@@ -35,6 +35,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/gravitational/trace"
 	"github.com/julienschmidt/httprouter"
+	"github.com/stkim1/pcrypto"
 )
 
 type APIConfig struct {
@@ -42,12 +43,15 @@ type APIConfig struct {
 	SessionService    session.Service
 	PermissionChecker PermissionChecker
 	AuditLog          events.IAuditLog
+	// added for pocket cert issues
+	CertSigner 	      *pcrypto.CaSigner
 }
 
 // APIServer implements http API server for AuthServer interface
 type APIServer struct {
 	httprouter.Router
 	a AuthWithRoles
+	certSigner *pcrypto.CaSigner
 }
 
 // NewAPIServer returns a new instance of APIServer HTTP handler
@@ -62,6 +66,9 @@ func NewAPIServer(config *APIConfig, role teleport.Role) APIServer {
 		},
 	}
 	srv.Router = *httprouter.New()
+
+	// pocket cert issues enhancement
+	enhanceWithPocketAPI(&srv, config)
 
 	// Operations on certificate authorities
 	srv.GET("/v1/domain", httplib.MakeHandler(srv.getDomainName))

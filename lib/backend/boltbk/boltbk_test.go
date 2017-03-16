@@ -81,3 +81,7 @@ func (s *BoltSuite) TestLock(c *C) {
 func (s *BoltSuite) TestValueAndTTL(c *C) {
 	s.suite.ValueAndTTl(c)
 }
+
+func (s *BoltSuite) TestDuplicatedKeys(c *C) {
+	s.suite.DuplicatedKeysInBuckets(c)
+}

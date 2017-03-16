@@ -113,3 +113,6 @@ project/plugins/project/
 
 # OSX
 .DS_Store
+
+# Project
+testexec/

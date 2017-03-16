@@ -2,7 +2,6 @@ package sqlitebk
 
 import (
     "database/sql"
-    "fmt"
     "os"
     "path/filepath"
     "sort"
@@ -13,307 +12,6 @@ import (
     "github.com/gravitational/trace"
     "github.com/mailgun/timetools"
 )
-
-const (
-    pcTablePrefix = "pcssh_"
-)
-
-//region Helper Structure & Functions
-type keyValueMeta struct {
-    Table      string
-    Created    time.Time
-    TTL        time.Duration
-    Key        string
-    Value      []byte
-}
-
-func concatErrors(errs... error) error {
-    var (
-        err error = nil
-    )
-    if len(errs) == 0 {
-        return err
-    }
-
-    for _, e := range errs {
-        if e != nil {
-            if err == nil {
-                err = e
-            } else {
-                err = fmt.Errorf("%v | %v", err, e)
-            }
-        }
-    }
-    return err
-}
-
-func convertTableName(tables []string) ([]string, error) {
-    var (
-        newTables []string
-    )
-    if tables == nil || len(tables) == 0 {
-        return nil, fmt.Errorf("No table name to convert for backend")
-    }
-    for _, tbl := range tables {
-        newTables = append(newTables, pcTablePrefix + tbl)
-    }
-    return newTables, nil
-}
-
-func appendTable(tables []string, tbl string) []string {
-    if tables == nil || len(tables) == 0 {
-        return []string{pcTablePrefix + tbl}
-    }
-    return append(tables, pcTablePrefix + tbl)
-}
-
-// check if every table in the list exits
-func checkTablesExist(sb *SQLiteBackend, tables []string) error {
-    var err error = nil
-    for _, tbl := range tables {
-        var (
-            counter int       = 0
-            stmt *sql.Stmt    = nil
-        )
-        stmt, err = sb.db.Prepare(fmt.Sprintf("SELECT count(name) FROM sqlite_master WHERE type = 'table' AND name = '%s'", tbl))
-        if err != nil {
-            break
-        }
-        err = stmt.QueryRow().Scan(&counter);
-        err = concatErrors(err, stmt.Close())
-        // this is a special error that needs to be treated differently
-        if counter == 0 {
-            return trace.NotFound("table %v not found", tbl)
-        }
-        if err != nil {
-            break
-        }
-    }
-    return err
-}
-
-// this only cares if value for key exists in tables. The only error this returns is `NotFound`
-// We don't care wheter this query comes up with error or not. We only cares if it returns value
-func getValuesForKey(sb *SQLiteBackend, tables []string, key string) ([]*keyValueMeta, error) {
-    var (
-        out  []*keyValueMeta = nil
-    )
-    for _, tbl := range tables {
-        var (
-            stmt *sql.Stmt
-            created time.Time
-            ttl time.Duration
-            value []byte
-            err error
-        )
-        stmt, err = sb.db.Prepare(fmt.Sprintf("SELECT created, ttl, value FROM %s WHERE key = '%s'", tbl, key))
-        if err != nil {
-            continue
-        }
-        stmt.QueryRow().Scan(&created, &ttl, &value);
-        if len(value) != 0 {
-            out = append(out,
-                &keyValueMeta{
-                    Table:      tbl,
-                    Created:    created,
-                    TTL:        ttl,
-                    Key:        key,
-                    Value:      value,
-                })
-        }
-        stmt.Close()
-    }
-    if out == nil || len(out) == 0 {
-        return nil, trace.NotFound("Value for key %v in %v not found", key, tables)
-    }
-    return out, nil
-}
-
-func getAllKeysFromTables(sb *SQLiteBackend, tables []string) ([]string, error) {
-    var (
-        out []string
-        err error           = nil
-    )
-    for _, tbl := range tables {
-        var (
-            stmt *sql.Stmt
-            rows *sql.Rows
-        )
-        stmt, err = sb.db.Prepare(fmt.Sprintf("SELECT key FROM %s", tbl))
-        if err != nil {
-            return nil, err
-        }
-        rows, err = stmt.Query();
-        if err != nil {
-            err = concatErrors(err, stmt.Close())
-            break
-        }
-        for rows.Next() {
-            var key string
-            err = rows.Scan(&key)
-            if err != nil {
-                break
-            }
-            out = append(out, key)
-        }
-        err = concatErrors(err, rows.Err())
-        err = concatErrors(err, rows.Close())
-        err = concatErrors(err, stmt.Close())
-        if err != nil {
-            break
-        }
-    }
-    return out, err
-}
-
-func upsertTables(sb *SQLiteBackend, tables []string) error {
-    var (
-        trans *sql.Tx       = nil
-        err error           = nil
-    )
-    trans, err = sb.db.Begin()
-    if err != nil {
-        return err
-    }
-    for _, tbl := range tables {
-        var stmt *sql.Stmt
-        stmt, err = trans.Prepare(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (created DATETIME, ttl BIGINT, key TEXT PRIMARY KEY NOT NULL, value BLOB)", tbl))
-        if err != nil {
-            break
-        }
-        _, err = stmt.Exec()
-        err = concatErrors(err, stmt.Close())
-        if err != nil {
-            break
-        }
-    }
-    if err == nil {
-        err = trans.Commit()
-    } else {
-        err = concatErrors(err, trans.Rollback())
-    }
-    return err
-}
-
-// func (b *BoltBackend) upsertVal(path []string, key string, val []byte, ttl time.Duration) error
-func upsertValue(sb *SQLiteBackend, tables []string, key string, val []byte, ttl time.Duration) error {
-    var (
-        trans *sql.Tx       = nil
-        err error           = nil
-        created time.Time   = sb.clock.UtcNow()
-    )
-    trans, err = sb.db.Begin()
-    if err != nil {
-        return trace.Wrap(err)
-    }
-    for _, tbl := range tables {
-        var stmt *sql.Stmt
-        stmt, err = trans.Prepare(fmt.Sprintf("INSERT OR REPLACE INTO %s (created, ttl, key, value) values (?, ?, ?, ?)", tbl))
-        if err != nil {
-            break
-        }
-        _, err = stmt.Exec(created, ttl, key, val)
-        err = concatErrors(err, stmt.Close())
-        if err != nil {
-            break
-        }
-    }
-    if err == nil {
-        err = trans.Commit()
-    } else {
-        err = concatErrors(err, trans.Rollback())
-    }
-    return err
-}
-
-func updateValue(sb *SQLiteBackend, tables []string, key string, val []byte, ttl time.Duration) error {
-    var (
-        trans *sql.Tx       = nil
-        err error           = nil
-        created time.Time   = sb.clock.UtcNow()
-    )
-    trans, err = sb.db.Begin()
-    if err != nil {
-        return err
-    }
-    for _, tbl := range tables {
-        var stmt *sql.Stmt
-        stmt, err = trans.Prepare(fmt.Sprintf("UPDATE OR IGNORE %s SET created = ?, ttl = ?, value = ? WHERE key = ?", tbl))
-        if err != nil {
-            break
-        }
-        _, err = stmt.Exec(created, ttl, val, key)
-        err = concatErrors(err, stmt.Close())
-        if err != nil {
-            break
-        }
-    }
-    if err == nil {
-        err = trans.Commit()
-    } else {
-        err = concatErrors(err, trans.Rollback())
-    }
-    return err
-}
-
-func deleteKeyFromTables(sb *SQLiteBackend, tables []string, key string) error {
-    var (
-        trans *sql.Tx       = nil
-        err error           = nil
-    )
-    trans, err = sb.db.Begin()
-    if err != nil {
-        return err
-    }
-    for _, tbl := range tables {
-        var stmt *sql.Stmt
-        stmt, err = trans.Prepare(fmt.Sprintf("DELETE FROM %s WHERE key = '%s';", tbl, key))
-        if err != nil {
-            break
-        }
-        _, err = stmt.Exec()
-        err = concatErrors(err, stmt.Close())
-        if err != nil {
-            break
-        }
-    }
-    if err == nil {
-        err = trans.Commit()
-    } else {
-        err = concatErrors(err, trans.Rollback())
-    }
-    return err
-}
-
-func deleteTables(sb *SQLiteBackend, tables []string) error {
-    var (
-        trans *sql.Tx       = nil
-        err error           = nil
-    )
-    trans, err = sb.db.Begin()
-    if err != nil {
-        return err
-    }
-    for _, tbl := range tables {
-        var stmt *sql.Stmt
-        stmt, err = trans.Prepare(fmt.Sprintf("DROP TABLE %s", tbl))
-        if err != nil {
-            break
-        }
-        _, err = stmt.Exec()
-        err = concatErrors(err, stmt.Close())
-        if err != nil {
-            break
-        }
-    }
-    if err == nil {
-        err = trans.Commit()
-    } else {
-        err = concatErrors(err, trans.Rollback())
-    }
-    return err
-}
-//endregion
 
 type SQLiteBackend struct {
     sync.Mutex
@@ -374,21 +72,26 @@ func (sb *SQLiteBackend) Close() error {
 // GetKeys returns a list of keys for a given path
 func (sb *SQLiteBackend) GetKeys(bucket []string) ([]string, error) {
     var (
-        keys, tables []string
-        err error = nil
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(bucket)
+        keys []string           = nil
+        err error               = nil
     )
-    tables, err = convertTableName(bucket)
-    if err != nil {
-        return nil, trace.Wrap(err)
-    }
-    err = checkTablesExist(sb, tables)
+    err = checkTablesExist(sb, table)
     if err != nil {
         if trace.IsNotFound(err) {
             return nil, nil
         }
         return nil, trace.Wrap(err)
     }
-    keys, err = getAllKeysFromTables(sb, tables)
+    err = checkBucketPathExist(sb, table, bucket)
+    if err != nil {
+        if trace.IsNotFound(err) {
+            return nil, nil
+        }
+        return nil, trace.Wrap(err)
+    }
+    keys, err = getAllKeysFromTable(sb, table, path)
     if err != nil {
         return nil, trace.Wrap(err)
     }
@@ -396,10 +99,7 @@ func (sb *SQLiteBackend) GetKeys(bucket []string) ([]string, error) {
     for _, key := range keys {
         sb.GetVal(bucket, key)
     }
-    // Here, we'll imitate the behavior of the original b.getKeys().
-    // Get the last table and collect all the valid keys in the table
-    tbl := tables[len(tables) - 1]
-    keys, err = getAllKeysFromTables(sb, []string{tbl})
+    keys, err = getAllKeysFromTable(sb, table, path)
     if err != nil {
         return nil, trace.Wrap(err)
     }
@@ -410,25 +110,26 @@ func (sb *SQLiteBackend) GetKeys(bucket []string) ([]string, error) {
 // GetVal return a value for a given key in the bucket
 func (sb *SQLiteBackend) GetVal(bucket []string, key string) ([]byte, error) {
     var (
-        pruned int      = 0
-        err, derr error = nil, nil
-        tables []string
-        values []*keyValueMeta
-        last *keyValueMeta
+        pruned int              = 0
+        err, derr error         = nil, nil
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(bucket)
+        values []*keyValueMeta  = nil
+        last []byte             = nil
     )
-    tables, err = convertTableName(bucket)
+    err = checkTablesExist(sb, table)
     if err != nil {
         return nil, trace.Wrap(err)
     }
-    err = checkTablesExist(sb, tables)
+    err = checkBucketPathExist(sb, table, bucket)
     if err != nil {
         return nil, trace.Wrap(err)
     }
-    values, err = getValuesForKey(sb, tables, key)
+    values, err = getValuesForKey(sb, table, path, key)
     if err != nil {
-        perr := checkTablesExist(sb, appendTable(tables, key))
+        perr := checkBucketPathExist(sb, table, append(bucket, key))
         if perr == nil {
-            return nil, trace.BadParameter("key '%v 'is a table name", key)
+            return nil, trace.BadParameter("key '%v 'is a bucket name", key)
         }
         // the only type of error getValuesForKey returns is NotFound.
         return nil, trace.Wrap(err)
@@ -438,21 +139,22 @@ func (sb *SQLiteBackend) GetVal(bucket []string, key string) ([]byte, error) {
     for _, v := range values {
         if v.TTL != 0 && sb.clock.UtcNow().Sub(v.Created) > v.TTL {
             pruned++
-            derr = deleteKeyFromTables(sb, []string{v.Table}, key)
+            derr = deleteKeyFromTable(sb, v.Table, v.Path, key)
             if derr != nil {
                 err = concatErrors(err, derr)
             }
+        } else {
+            // this will pick up the last valid element
+            last = v.Value
         }
     }
-    if pruned == len(values) {
-        return nil, trace.NotFound("%v: %v not found", bucket, key)
+    if pruned != 0 && pruned == len(values) {
+        return nil, trace.NotFound("Values for key %v not found in bucket %v | pruned %v", key, bucket, pruned)
     }
     if err != nil {
         return nil, err
     }
-    // FIXME : this is stupid as it only takes the last value and assume everything else is the same
-    last = values[len(values) - 1]
-    return last.Value, nil
+    return last, nil
 }
 
 // GetValAndTTL returns value and TTL for a key in bucket
@@ -461,34 +163,39 @@ func (sb *SQLiteBackend) GetValAndTTL(bucket []string, key string) ([]byte, time
         pruned int              = 0
         err, derr error         = nil, nil
         newTTL time.Duration    = 0
-        tables []string
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(bucket)
         values []*keyValueMeta
         last *keyValueMeta
     )
-    tables, err = convertTableName(bucket)
+    err = checkTablesExist(sb, table)
     if err != nil {
         return nil, 0, trace.Wrap(err)
     }
-    err = checkTablesExist(sb, tables)
+    err = checkBucketPathExist(sb, table, bucket)
     if err != nil {
         return nil, 0, trace.Wrap(err)
     }
-    values, err = getValuesForKey(sb, tables, key)
+    values, err = getValuesForKey(sb, table, path, key)
     if err != nil {
-        perr := checkTablesExist(sb, appendTable(tables, key))
+        perr := checkBucketPathExist(sb, table, append(bucket, key))
         if perr == nil {
-            return nil, 0, trace.BadParameter("key '%v 'is a table name", key)
+            return nil, 0, trace.BadParameter("key '%v 'is a bucket name", key)
         }
         return nil, 0, trace.Wrap(err)
     }
 
+    // remove old value
     for _, v := range values {
         if v.TTL != 0 && sb.clock.UtcNow().Sub(v.Created) > v.TTL {
             pruned++
-            derr = deleteKeyFromTables(sb, []string{v.Table}, key)
+            derr = deleteKeyFromTable(sb, v.Table, v.Path, key)
             if derr != nil {
                 err = concatErrors(err, derr)
             }
+        } else {
+            // this will pick up the last valid element
+            last = v
         }
     }
     if pruned == len(values) {
@@ -497,8 +204,6 @@ func (sb *SQLiteBackend) GetValAndTTL(bucket []string, key string) ([]byte, time
     if err != nil {
         return nil, 0, trace.Wrap(err)
     }
-    // FIXME : this is stupid as it only takes the last value and assume everything else is the same
-    last = values[len(values) - 1]
     if last.TTL != 0 {
         newTTL = last.Created.Add(last.TTL).Sub(sb.clock.UtcNow())
     }
@@ -509,23 +214,24 @@ func (sb *SQLiteBackend) GetValAndTTL(bucket []string, key string) ([]byte, time
 // if the value already exists, returns AlreadyExistsError
 func (sb *SQLiteBackend) CreateVal(bucket []string, key string, val []byte, ttl time.Duration) error {
     var (
-        tables []string
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(bucket)
         values []*keyValueMeta  = nil
         err error               = nil
     )
-    tables, err = convertTableName(bucket)
+    err = upsertTable(sb, table)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = upsertTables(sb, tables)
+    err = upsertBucketPath(sb, table, bucket)
     if err != nil {
         return trace.Wrap(err)
     }
-    values, err = getValuesForKey(sb, tables, key)
+    values, err = getValuesForKey(sb, table, path, key)
     if values != nil {
         return trace.AlreadyExists("'%v' already exists", key)
     }
-    err = upsertValue(sb, tables, key, val, ttl)
+    err = upsertValue(sb, table, path, key, val, ttl)
     if err != nil {
         return trace.Wrap(err)
     }
@@ -535,29 +241,26 @@ func (sb *SQLiteBackend) CreateVal(bucket []string, key string, val []byte, ttl 
 // TouchVal updates the TTL of the key without changing the value
 func (sb *SQLiteBackend) TouchVal(bucket []string, key string, ttl time.Duration) error {
     var (
-        tables []string
-        values []*keyValueMeta
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(bucket)
+        values []*keyValueMeta  = nil
         err, uerr error         = nil, nil
     )
-    tables, err = convertTableName(bucket)
+    err = upsertTable(sb, table)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = upsertTables(sb, tables)
+    err = upsertBucketPath(sb, table, bucket)
     if err != nil {
         return trace.Wrap(err)
     }
-    values, err = getValuesForKey(sb, tables, key)
+    values, err = getValuesForKey(sb, table, path, key)
     if err != nil {
-        perr := checkTablesExist(sb, appendTable(tables, key))
-        if perr == nil {
-            return trace.BadParameter("key '%v 'is a table name", key)
-        }
         // the only type of error getValuesForKey returns is NotFound.
         return trace.Wrap(err)
     }
     for _, v := range values {
-        uerr = updateValue(sb, []string{v.Table}, key, v.Value, ttl)
+        uerr = updateValue(sb, v.Table, v.Path, key, v.Value, ttl)
         if uerr != nil {
             err = concatErrors(err, uerr)
         }
@@ -572,18 +275,19 @@ func (sb *SQLiteBackend) TouchVal(bucket []string, key string, ttl time.Duration
 // ForeverTTL for no TTL
 func (sb *SQLiteBackend) UpsertVal(bucket []string, key string, val []byte, ttl time.Duration) error {
     var (
-        tables []string
-        err error
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(bucket)
+        err error               = nil
     )
-    tables, err = convertTableName(bucket)
+    err = upsertTable(sb, table)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = upsertTables(sb, tables)
+    err = upsertBucketPath(sb, table, bucket)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = upsertValue(sb, tables, key, val, ttl)
+    err = upsertValue(sb, table, path, key, val, ttl)
     if err != nil {
         return trace.Wrap(err)
     }
@@ -595,22 +299,23 @@ func (sb *SQLiteBackend) DeleteKey(bucket []string, key string) error {
     sb.Lock()
     defer sb.Unlock()
     var (
-        tables []string
-        err error
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(bucket)
+        err error               = nil
     )
-    tables, err = convertTableName(bucket)
+    err = checkTablesExist(sb, table)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = checkTablesExist(sb, tables)
+    err = checkBucketPathExist(sb, table, bucket)
     if err != nil {
         return trace.Wrap(err)
     }
-    _, err = getValuesForKey(sb, tables, key)
+    _, err = getValuesForKey(sb, table, path, key)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = deleteKeyFromTables(sb, tables, key)
+    err = deleteKeyFromTable(sb, table, path, key)
     if err != nil {
         return trace.Wrap(err)
     }
@@ -622,18 +327,19 @@ func (sb *SQLiteBackend) DeleteBucket(bucket []string, bkt string) error {
     sb.Lock()
     defer sb.Unlock()
     var (
-        tables []string
-        err error
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(append(bucket, bkt))
+        err error               = nil
     )
-    tables, err = convertTableName(bucket)
+    err = checkTablesExist(sb, table)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = checkTablesExist(sb, tables)
+    err = checkBucketPathExist(sb, table, bucket)
     if err != nil {
         return trace.Wrap(err)
     }
-    err = deleteTables(sb, []string{pcTablePrefix + bkt})
+    err = deleteBucketPathFromTable(sb, table, path)
     if err != nil {
         return trace.Wrap(err)
     }
@@ -678,13 +384,10 @@ func (sb *SQLiteBackend) CompareAndSwap(bucket []string, key string, val []byte,
     sb.Lock()
     defer sb.Unlock()
     var (
-        tables []string
-        err error
+        table string            = fullTableName(bucket[0])
+        path string             = fullBucketPath(bucket)
+        err error               = nil
     )
-    tables, err = convertTableName(bucket)
-    if err != nil {
-        return nil, trace.Wrap(err)
-    }
     storedVal, err := sb.GetVal(bucket, key)
     if err != nil && trace.IsNotFound(err) && len(prevVal) != 0 {
         return nil, err
@@ -693,11 +396,15 @@ func (sb *SQLiteBackend) CompareAndSwap(bucket []string, key string, val []byte,
         return nil, trace.AlreadyExists("key '%v' already exists", key)
     }
     if string(prevVal) == string(storedVal) {
-        err = upsertTables(sb, tables)
+        err = upsertTable(sb, table)
         if err != nil {
             return nil, trace.Wrap(err)
         }
-        err = upsertValue(sb, tables, key, val, ttl)
+        err = upsertBucketPath(sb, table, bucket)
+        if err != nil {
+            return nil, trace.Wrap(err)
+        }
+        err = upsertValue(sb, table, path, key, val, ttl)
         if err != nil {
             return nil, trace.Wrap(err)
         }

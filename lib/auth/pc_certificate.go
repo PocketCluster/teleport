@@ -25,7 +25,7 @@ type PocketCertParam struct {
 
 // RequestSignedCertificate is used by auth service clients (other services, like proxy or SSH) when a new node joins
 // the cluster
-func RequestSignedCertificate(certOpts *PocketCertParam, id IdentityID, token string) error {
+func RequestSignedCertificate(certParam *PocketCertParam, id IdentityID, token string) error {
     tok, err := readToken(token)
     if err != nil {
         return trace.Wrap(err)
@@ -35,7 +35,7 @@ func RequestSignedCertificate(certOpts *PocketCertParam, id IdentityID, token st
         return trace.Wrap(err)
     }
 
-    var servers []utils.NetAddr = certOpts.AuthServers
+    var servers []utils.NetAddr = certParam.AuthServers
     client, err := NewTunClient(
         "auth.client.cert.reqsigned",
         servers,
@@ -46,11 +46,11 @@ func RequestSignedCertificate(certOpts *PocketCertParam, id IdentityID, token st
     }
     defer client.Close()
 
-    keys, err := requestSignedCertificateWithToken(client, tok, id.HostUUID, certOpts.Hostname, certOpts.IP4Addr, id.Role)
+    keys, err := requestSignedCertificateWithToken(client, tok, id.HostUUID, certParam.Hostname, certParam.IP4Addr, id.Role)
     if err != nil {
         return trace.Wrap(err)
     }
-    return writeDockerKeyAndCert(certOpts, keys)
+    return writeDockerKeyAndCert(certParam, keys)
 }
 
 // requestSignedCertificateWithToken calls the auth service API to register a new node via registration token which has

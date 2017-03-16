@@ -22,7 +22,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
+	//"os" (03/11/2017) blocked with pocket enhancement
 	"sort"
 	"sync"
 	"time"
@@ -418,6 +418,9 @@ func (s *AuthTunnel) keyAuth(
 // to the auth server. Such connections are usually created using a
 // TunClient object
 //
+
+// (03/11/2017) This AuthTunnel.passwordAuth() is replaced with AuthTunnel Extension in Pocket
+/*
 func (s *AuthTunnel) passwordAuth(
 	conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 	var ab *authBucket
@@ -487,6 +490,7 @@ func (s *AuthTunnel) passwordAuth(
 		return nil, trace.Errorf("unsupported auth method: '%v'", ab.Type)
 	}
 }
+*/
 
 // authBucket uses password to transport app-specific user name and
 // auth-type in addition to the password to support auth

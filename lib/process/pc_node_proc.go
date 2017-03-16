@@ -1,9 +1,9 @@
 package process
 
 import (
+    "os"
     "time"
     "sync"
-    "path/filepath"
 
     "github.com/gravitational/teleport"
     "github.com/gravitational/teleport/lib/auth"
@@ -81,7 +81,6 @@ func (p *PocketNodeProcess) connectToAuthService(role teleport.Role) (*service.C
             return nil, trace.Wrap(err)
         }
     }
-    storage := utils.NewFileAddrStorage(filepath.Join(p.Config.DataDir, "authservers.json"))
 
     authUser := identity.Cert.ValidPrincipals[0]
     authClient, err := auth.NewTunClient(
@@ -89,7 +88,6 @@ func (p *PocketNodeProcess) connectToAuthService(role teleport.Role) (*service.C
         p.Config.AuthServers,
         authUser,
         []ssh.AuthMethod{ssh.PublicKeys(identity.KeySigner)},
-        auth.TunClientStorage(storage),
     )
     // success?
     if err != nil {
@@ -208,7 +206,7 @@ func (p *PocketNodeProcess) RegisterWithAuthServer(token string, role teleport.R
                 continue
             }
 /*
-            TODO : need to look into IsNotFound Error to see what really happens
+            //TODO : need to look into IsNotFound Error to see what really happens
             if !trace.IsNotFound(err) {
                 return trace.Wrap(err)
             }
@@ -268,7 +266,7 @@ func (p *PocketNodeProcess) RequestSignedCertificateWithAuthServer(token string,
                 continue
             }
 /*
-            TODO : need to look into IsNotFound Error to see what really happens
+            //TODO : need to look into IsNotFound Error to see what really happens.
             if !trace.IsNotFound(err) {
                 return trace.Wrap(err)
             }
@@ -281,6 +279,7 @@ func (p *PocketNodeProcess) RequestSignedCertificateWithAuthServer(token string,
             err = auth.RequestSignedCertificate(
                 &auth.PocketCertParam{
                     AuthServers:        cfg.AuthServers,
+                    Hostname:           cfg.Hostname,
                     DockerCertFile:     cfg.DockerCertFile,
                     DockerKeyFile:      cfg.DockerAuthFile,
                     DockerAuthFile:     cfg.DockerAuthFile,
@@ -301,4 +300,36 @@ func (p *PocketNodeProcess) RequestSignedCertificateWithAuthServer(token string,
             authClient.Close()
         }
     })
+}
+
+// --- Node Process Test Starter --- //
+
+func StartNodeTeleport(authServerAddr, authToken string, debug bool) error {
+    cfg, err := service.MakeNodeConfig(authServerAddr, authToken, debug)
+    if err != nil {
+        log.Error(err.Error())
+        return trace.Wrap(err, "error in initializing teleport")
+    }
+    // add temporary token
+    srv, err := NewNodeProcess(cfg)
+    if err != nil {
+        log.Error(err.Error())
+        return trace.Wrap(err, "error in initializing teleport")
+    }
+    if err := srv.Start(); err != nil {
+        log.Error(err.Error())
+        return trace.Wrap(err, "starting teleport")
+    }
+    // create the pid file
+    if cfg.PIDFile != "" {
+        f, err := os.OpenFile(cfg.PIDFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+        if err != nil {
+            log.Error(err.Error())
+            return trace.Wrap(err, "failed to create the PID file")
+        }
+        log.Info(f, "%v", os.Getpid())
+        defer f.Close()
+    }
+    srv.Wait()
+    return nil
 }

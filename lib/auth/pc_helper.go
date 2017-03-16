@@ -29,15 +29,15 @@ func checkTokenTTL(s *AuthServer, token string) bool {
     return true
 }
 
-func writeDockerKeyAndCert(certOpts *PocketCertParam, keys *packedAuthKeyCert) error {
-    log.Debugf("write slave docker auth to %v, key to %v, cert from %v", certOpts.DockerAuthFile, certOpts.DockerKeyFile, certOpts.DockerCertFile)
-    if err := ioutil.WriteFile(certOpts.DockerAuthFile, keys.Auth, 0600); err != nil {
+func writeDockerKeyAndCert(certParam *PocketCertParam, keys *packedAuthKeyCert) error {
+    log.Debugf("write slave docker auth to %v, key to %v, cert from %v", certParam.DockerAuthFile, certParam.DockerKeyFile, certParam.DockerCertFile)
+    if err := ioutil.WriteFile(certParam.DockerAuthFile, keys.Auth, 0600); err != nil {
         return err
     }
-    if err := ioutil.WriteFile(certOpts.DockerKeyFile,  keys.Key, 0600); err != nil {
+    if err := ioutil.WriteFile(certParam.DockerKeyFile,  keys.Key, 0600); err != nil {
         return err
     }
-    if err := ioutil.WriteFile(certOpts.DockerCertFile, keys.Cert, 0600); err != nil {
+    if err := ioutil.WriteFile(certParam.DockerCertFile, keys.Cert, 0600); err != nil {
         return err
     }
     return nil

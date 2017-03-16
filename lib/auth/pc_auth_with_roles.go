@@ -1,6 +1,5 @@
 package auth
 
-
 import (
     "fmt"
     "os"
@@ -13,17 +12,12 @@ import (
     "github.com/stkim1/pcrypto"
 )
 
-type PocketAuthWithRoles struct {
-    *AuthWithRoles
-    caSigner    *pcrypto.CaSigner
-}
-
-func (a *PocketAuthWithRoles) issueSignedCertificateWithToken(req *signedCertificateReq) (*packedAuthKeyCert, error) {
+func (a *AuthWithRoles) issueSignedCertificateWithToken(certSigner *pcrypto.CaSigner, req *signedCertificateReq) (*packedAuthKeyCert, error) {
     // TODO : add action perm for requesting signed certificate
     if err := a.permChecker.HasPermission(a.role, ActionRegisterUsingToken); err != nil {
         return nil, trace.Wrap(err)
     }
-    return issueSignedCertificateWithToken(a, req)
+    return issueSignedCertificateWithToken(a, certSigner, req)
 }
 
 // issueSignedCertificateWithToken adds a new signed certificate for a node to the PocketCluster using previously issued token.
@@ -32,7 +26,7 @@ func (a *PocketAuthWithRoles) issueSignedCertificateWithToken(req *signedCertifi
 // If a token was generated with a TTL, it gets enforced (can't register new nodes after TTL expires)
 // If a token was generated with a TTL=0, it means it's a single-use token and it gets destroyed
 // after a successful registration.
-func issueSignedCertificateWithToken(a *PocketAuthWithRoles, req *signedCertificateReq) (*packedAuthKeyCert, error) {
+func issueSignedCertificateWithToken(a *AuthWithRoles, certSigner *pcrypto.CaSigner, req *signedCertificateReq) (*packedAuthKeyCert, error) {
     if len(req.Hostname) == 0 {
         return nil, trace.BadParameter("Hostname cannot be empty")
     }
@@ -60,7 +54,7 @@ func issueSignedCertificateWithToken(a *PocketAuthWithRoles, req *signedCertific
         return nil, trace.AccessDenied("'%v' cannot cannot receive a signed certificate. The token has expired", req.Hostname)
     }
     // generate & return the node cert:
-    keys, err := createSignedCertificate(a.caSigner, req)
+    keys, err := createSignedCertificate(certSigner, req)
     if err != nil {
         return nil, trace.Wrap(err)
     }
@@ -76,15 +70,15 @@ type packedAuthKeyCert struct {
 
 // createSignedCertificate generates private key and certificate signed
 // by the host certificate authority, listing the role of this server
-func createSignedCertificate(caSigner *pcrypto.CaSigner, req *signedCertificateReq) (*packedAuthKeyCert, error) {
+func createSignedCertificate(certSigner *pcrypto.CaSigner, req *signedCertificateReq) (*packedAuthKeyCert, error) {
     // TODO : check if signed cert for this uuid exists. If does, return the value
 
-    a := caSigner.CertificateAuthority()
+    a := certSigner.CertificateAuthority()
     _, k, _, err := pcrypto.GenerateStrongKeyPair()
     if err != nil {
         return nil, trace.Wrap(err)
     }
-    c, err := caSigner.GenerateSignedCertificate(req.Hostname, req.IP4Addr, k)
+    c, err := certSigner.GenerateSignedCertificate(req.Hostname, req.IP4Addr, k)
     if err != nil {
         log.Warningf("[AUTH] Node `%v` cannot receive a signed certificate : cert generation error. %v", req.Hostname, err)
         return nil, trace.Wrap(err)
@@ -102,7 +96,7 @@ type signupTokenPack struct {
     SignupToken   *services.SignupToken    `json:"signuptokendata"`
 }
 
-func (a *PocketAuthWithRoles) releaseSignupToken(signupToken string) (*signupTokenPack, error) {
+func (a *AuthWithRoles) releaseSignupToken(signupToken string) (*signupTokenPack, error) {
     // TODO : add action perm for getting signup token data
     if err := a.permChecker.HasPermission(a.role, ActionCreateUserWithToken); err != nil {
         return nil, trace.Wrap(err)

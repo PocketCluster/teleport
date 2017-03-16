@@ -1,10 +1,11 @@
+// +build darwin
 package process
 
 import (
     "crypto/tls"
     "fmt"
     "net"
-    "net/http"
+    //"net/http"
     "path/filepath"
     "os"
     "sync"
@@ -15,6 +16,7 @@ import (
     "github.com/gravitational/teleport/lib/utils"
     "github.com/gravitational/teleport/lib/auth"
     "github.com/gravitational/teleport/lib/auth/native"
+    "github.com/gravitational/teleport/lib/config"
     "github.com/gravitational/teleport/lib/defaults"
     "github.com/gravitational/teleport/lib/events"
     "github.com/gravitational/teleport/lib/session"
@@ -26,7 +28,7 @@ import (
     "github.com/gravitational/teleport/lib/reversetunnel"
     "github.com/gravitational/teleport/lib/srv"
     "github.com/gravitational/teleport/lib/service"
-    "github.com/gravitational/teleport/lib/web"
+    //"github.com/gravitational/teleport/lib/web"
 
     log "github.com/Sirupsen/logrus"
     "github.com/gravitational/trace"
@@ -144,7 +146,6 @@ func (p *PocketCoreProcess) connectToAuthService(role teleport.Role) (*service.C
             return nil, trace.Wrap(err)
         }
     }
-    storage := utils.NewFileAddrStorage(filepath.Join(p.Config.DataDir, "authservers.json"))
 
     authUser := identity.Cert.ValidPrincipals[0]
     authClient, err := auth.NewTunClient(
@@ -152,7 +153,6 @@ func (p *PocketCoreProcess) connectToAuthService(role teleport.Role) (*service.C
         p.Config.AuthServers,
         authUser,
         []ssh.AuthMethod{ssh.PublicKeys(identity.KeySigner)},
-        auth.TunClientStorage(storage),
     )
     // success?
     if err != nil {
@@ -279,6 +279,7 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
         SessionService:    sessionService,
         PermissionChecker: auth.NewStandardPermissions(),
         AuditLog:          auditLog,
+        CertSigner:        p.Config.CaSigner,
     }
 
     limiter, err := limiter.NewLimiter(cfg.Auth.Limiter)
@@ -288,13 +289,12 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
 
     // Register an SSH endpoint which is used to create an SSH tunnel to send HTTP
     // requests to the Auth API
-    var authTunnel *auth.PocketAuthTunnel
+    var authTunnel *auth.AuthTunnel
     p.RegisterFunc(func() error {
         utils.Consolef(cfg.Console, "[AUTH]  Auth service is starting on %v", cfg.Auth.SSHAddr.Addr)
-        authTunnel, err = auth.NewPocketTunnel(
+        authTunnel, err = auth.NewTunnel(
             cfg.Auth.SSHAddr,
             identity.KeySigner,
-            p.Config.CaSigner,
             apiConf,
             auth.SetLimiter(limiter),
         )
@@ -578,48 +578,46 @@ func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
 
     // Register web proxy server
     var webListener net.Listener
+    // TODO : (03/14/2017) this is now removed from user login flow. Delete this when it is fine to do so
+/*
+    p.RegisterFunc(func() error {
+        utils.Consolef(cfg.Console, "[PROXY] Web proxy service is starting on %v", cfg.Proxy.WebAddr.Addr)
+        webHandler, err := web.NewPocketHandler(
+            web.Config{
+                Proxy:       tsrv,
+                AssetsDir:   cfg.Proxy.AssetsDir,
+                AuthServers: cfg.AuthServers[0],
+                DomainName:  cfg.Hostname,
+                ProxyClient: conn.Client,
+                DisableUI:   cfg.Proxy.DisableWebUI,
+            })
+        if err != nil {
+            utils.Consolef(cfg.Console, "[PROXY] error in starting the web server: %v", err)
+            return trace.Wrap(err)
+        }
+        defer webHandler.Close()
 
-    if !p.Config.Proxy.DisableWebUI {
-        p.RegisterFunc(func() error {
-            utils.Consolef(cfg.Console, "[PROXY] Web proxy service is starting on %v", cfg.Proxy.WebAddr.Addr)
-            webHandler, err := web.NewHandler(
-                web.Config{
-                    Proxy:       tsrv,
-                    AssetsDir:   cfg.Proxy.AssetsDir,
-                    AuthServers: cfg.AuthServers[0],
-                    DomainName:  cfg.Hostname,
-                    ProxyClient: conn.Client,
-                    DisableUI:   cfg.Proxy.DisableWebUI,
-                })
-            if err != nil {
-                utils.Consolef(cfg.Console, "[PROXY] starting the web server: %v", err)
-                return trace.Wrap(err)
-            }
-            defer webHandler.Close()
+        proxyLimiter.WrapHandle(webHandler)
+        p.BroadcastEvent(service.Event{Name: service.ProxyWebServerEvent, Payload: webHandler})
 
-            proxyLimiter.WrapHandle(webHandler)
-            p.BroadcastEvent(service.Event{Name: service.ProxyWebServerEvent, Payload: webHandler})
-
-            log.Infof("[PROXY] init TLS listeners")
-            webListener, err = utils.ListenTLS(
-                cfg.Proxy.WebAddr.Addr,
-                cfg.Proxy.TLSCert,
-                cfg.Proxy.TLSKey)
-            if err != nil {
-                return trace.Wrap(err)
+        log.Infof("[PROXY] init TLS listeners")
+        webListener, err = utils.ListenTLS(
+            cfg.Proxy.WebAddr.Addr,
+            cfg.Proxy.TLSCert,
+            cfg.Proxy.TLSKey)
+        if err != nil {
+            return trace.Wrap(err)
+        }
+        if err = http.Serve(webListener, proxyLimiter); err != nil {
+            if askedToExit {
+                log.Infof("[PROXY] web server exited")
+                return nil
             }
-            if err = http.Serve(webListener, proxyLimiter); err != nil {
-                if askedToExit {
-                    log.Infof("[PROXY] web server exited")
-                    return nil
-                }
-                log.Error(err)
-            }
-            return nil
-        })
-    } else {
-        log.Infof("[WEB] Web UI is disabled")
-    }
+            log.Error(err)
+        }
+        return nil
+    })
+*/
 
     // Register ssh proxy server
     p.RegisterFunc(func() error {
@@ -655,5 +653,33 @@ func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
         }
         log.Infof("[PROXY] proxy service exited")
     })
+    return nil
+}
+
+// --- Core Process Test Starter --- //
+
+func StartCoreProcessTest(cfg *service.PocketConfig, debug bool) error {
+    // add static tokens
+    for _, token := range []config.StaticToken{"node:d52527f9-b260-41d0-bb5a-e23b0cfe0f8f", "node:c9s93fd9-3333-91d3-9999-c9s93fd98f43"} {
+        roles, tokenValue, err := token.Parse()
+        if err != nil {
+            log.Error(err.Error())
+            return trace.Wrap(err)
+        }
+        cfg.Auth.StaticTokens = append(cfg.Auth.StaticTokens, services.ProvisionToken{Token: tokenValue, Roles: roles, Expires: time.Unix(0, 0)})
+    }
+
+    // add temporary token
+    srv, err := NewCoreProcess(cfg)
+    if err != nil {
+        log.Error(err.Error())
+        return trace.Wrap(err, "initializing teleport")
+    }
+
+    if err := srv.Start(); err != nil {
+        log.Error(err.Error())
+        return trace.Wrap(err, "starting teleport")
+    }
+    srv.Wait()
     return nil
 }

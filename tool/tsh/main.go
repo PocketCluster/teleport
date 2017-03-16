@@ -181,7 +181,7 @@ func onPlay(cf *CLIConf) {
 	if err != nil {
 		utils.FatalError(err)
 	}
-	if err := tc.Play(context.TODO(), cf.Namespace, cf.SessionID); err != nil {
+	if err := tc.Play(context.TODO(), cf.SessionID); err != nil {
 		utils.FatalError(err)
 	}
 }
@@ -320,7 +320,7 @@ func onJoin(cf *CLIConf) {
 	if err != nil {
 		utils.FatalError(fmt.Errorf("'%v' is not a valid session ID (must be GUID)", cf.SessionID))
 	}
-	if err = tc.Join(context.TODO(), cf.Namespace, *sid, nil); err != nil {
+	if err = tc.Join(context.TODO(), *sid, nil); err != nil {
 		utils.FatalError(err)
 	}
 }

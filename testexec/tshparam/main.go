@@ -1,0 +1,220 @@
+/*
+Copyright 2016 Gravitational, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package main
+
+import (
+	"fmt"
+	"os"
+    "time"
+    "strings"
+
+    log "github.com/Sirupsen/logrus"
+	"github.com/gravitational/teleport/lib/client"
+    "github.com/gravitational/teleport/lib/defaults"
+	"github.com/gravitational/teleport/lib/utils"
+
+    "github.com/davecgh/go-spew/spew"
+)
+
+func main() {
+	run(os.Args[1:], false)
+}
+
+// CLIConf stores command line arguments and flags:
+type CLIConf struct {
+	// UserHost contains "[login]@hostname" argument to SSH command
+	UserHost string
+	// Commands to execute on a remote host
+	RemoteCommand []string
+	// Username is the Teleport user's username (to login into proxies)
+	Username string
+	// Proxy keeps the hostname:port of the SSH proxy to use
+	Proxy string
+	// TTL defines how long a session must be active (in minutes)
+	MinsToLive int32
+	// SSH Port on a remote SSH host
+	NodePort int16
+	// Login on a remote SSH host
+	NodeLogin string
+	// InsecureSkipVerify bypasses verification of HTTPS certificate when talking to web proxy
+	InsecureSkipVerify bool
+	// IsUnderTest is set to true for unit testing
+	IsUnderTest bool
+	// AgentSocketAddr is address for agent listeing socket
+	AgentSocketAddr utils.NetAddrVal
+	// Remote SSH session to join
+	SessionID string
+	// Src:dest parameter for SCP
+	CopySpec []string
+	// -r flag for scp
+	RecursiveCopy bool
+	// -L flag for ssh. Local port forwarding like 'ssh -L 80:remote.host:80 -L 443:remote.host:443'
+	LocalForwardPorts []string
+	// --local flag for ssh
+	LocalExec bool
+	// ExternalAuth is used to authenticate using external OIDC method
+	ExternalAuth string
+	// SiteName specifies remote site go login to
+	SiteName string
+	// Interactive, when set to true, launches remote command with the terminal attached
+	Interactive bool
+}
+
+// run executes TSH client. same as main() but easier to test
+func run(args []string, underTest bool) {
+	var (
+		cf CLIConf
+	)
+	cf.IsUnderTest = underTest
+	utils.InitLoggerCLI()
+
+	// configure CLI argument parser:
+	app := utils.InitCLIParser("tsh", "TSH: Teleport SSH client").Interspersed(false)
+	app.Flag("login", "Remote host login").Short('l').Envar("TELEPORT_LOGIN").StringVar(&cf.NodeLogin)
+	app.Flag("user", fmt.Sprintf("SSH proxy user [%s]", client.Username())).Envar("TELEPORT_USER").StringVar(&cf.Username)
+	app.Flag("auth", "[EXPERIMENTAL] Use external authentication, e.g. 'google'").Envar("TELEPORT_AUTH").Hidden().StringVar(&cf.ExternalAuth)
+	app.Flag("cluster", "Specify the cluster to connect").Envar("TELEPORT_SITE").StringVar(&cf.SiteName)
+	app.Flag("proxy", "SSH proxy host or IP address").Envar("TELEPORT_PROXY").StringVar(&cf.Proxy)
+	app.Flag("ttl", "Minutes to live for a SSH session").Int32Var(&cf.MinsToLive)
+	app.Flag("insecure", "Do not verify server's certificate and host name. Use only in test environments").Default("false").BoolVar(&cf.InsecureSkipVerify)
+	debugMode := app.Flag("debug", "Verbose logging to stdout").Short('d').Bool()
+	app.HelpFlag.Short('h')
+	ver := app.Command("version", "Print the version")
+	// ssh
+	ssh := app.Command("ssh", "Run shell or execute a command on a remote SSH node")
+	ssh.Arg("[user@]host", "Remote hostname and the login to use").Required().StringVar(&cf.UserHost)
+	ssh.Arg("command", "Command to execute on a remote host").StringsVar(&cf.RemoteCommand)
+	ssh.Flag("port", "SSH port on a remote host").Short('p').Int16Var(&cf.NodePort)
+	ssh.Flag("forward", "Forward localhost connections to remote server").Short('L').StringsVar(&cf.LocalForwardPorts)
+	ssh.Flag("local", "Execute command on localhost after connecting to SSH node").Default("false").BoolVar(&cf.LocalExec)
+	ssh.Flag("", "Allocate TTY").Short('t').BoolVar(&cf.Interactive)
+	// join
+	join := app.Command("join", "Join the active SSH session")
+	join.Arg("session-id", "ID of the session to join").Required().StringVar(&cf.SessionID)
+	// play
+	play := app.Command("play", "Replay the recorded SSH session")
+	play.Arg("session-id", "ID of the session to play").Required().StringVar(&cf.SessionID)
+	// scp
+	scp := app.Command("scp", "Secure file copy")
+	scp.Arg("from, to", "Source and destination to copy").Required().StringsVar(&cf.CopySpec)
+	scp.Flag("recursive", "Recursive copy of subdirectories").Short('r').BoolVar(&cf.RecursiveCopy)
+	scp.Flag("port", "Port to connect to on the remote host").Short('P').Int16Var(&cf.NodePort)
+	// ls
+	ls := app.Command("ls", "List remote SSH nodes")
+	ls.Arg("labels", "List of labels to filter node list").StringVar(&cf.UserHost)
+	// clusters
+	clusters := app.Command("clusters", "List available Teleport clusters")
+	// agent (SSH agent listening on unix socket)
+	agent := app.Command("agent", "Start SSH agent on unix socket")
+	agent.Flag("socket", "SSH agent listening socket address, e.g. unix:///tmp/teleport.agent.sock").SetValue(&cf.AgentSocketAddr)
+
+	// login logs in with remote proxy and obtains a "session certificate" which gets
+	// stored in ~/.tsh directory
+	login := app.Command("login", "Log in to the cluster and store the session certificate to avoid login prompts")
+
+	// logout deletes obtained session certificates in ~/.tsh
+	logout := app.Command("logout", "Delete a cluster certificate")
+
+	// parse CLI commands+flags:
+	command, err := app.Parse(args)
+	if err != nil {
+		utils.FatalError(err)
+	}
+
+	// apply -d flag:
+	if *debugMode {
+		utils.InitLoggerDebug()
+	}
+
+    log.Infof("client configuration %s", spew.Sdump(makeClient(&cf)))
+
+	switch command {
+	case ver.FullCommand():
+		//onVersion()
+	case ssh.FullCommand():
+		//onSSH(&cf)
+	case join.FullCommand():
+		//onJoin(&cf)
+	case scp.FullCommand():
+		//onSCP(&cf)
+	case play.FullCommand():
+		//onPlay(&cf)
+	case ls.FullCommand():
+		//onListNodes(&cf)
+	case clusters.FullCommand():
+		//onListSites(&cf)
+	case agent.FullCommand():
+		//onAgentStart(&cf)
+	case login.FullCommand():
+		//onLogin(&cf)
+	case logout.FullCommand():
+		//onLogout(&cf)
+	}
+}
+
+// makeClient takes the command-line configuration and constructs & returns
+// a fully configured TeleportClient object
+func makeClient(cf *CLIConf) (cfg *client.Config, err error) {
+	// apply defults
+	if cf.NodePort == 0 {
+		cf.NodePort = defaults.SSHServerListenPort
+	}
+	if cf.MinsToLive == 0 {
+		cf.MinsToLive = int32(defaults.CertDuration / time.Minute)
+	}
+
+	// split login & host
+	hostLogin := cf.NodeLogin
+	var labels map[string]string
+	if cf.UserHost != "" {
+		parts := strings.Split(cf.UserHost, "@")
+		if len(parts) > 1 {
+			hostLogin = parts[0]
+			cf.UserHost = parts[1]
+		}
+		// see if remote host is specified as a set of labels
+		if strings.Contains(cf.UserHost, "=") {
+			labels, err = client.ParseLabelSpec(cf.UserHost)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	fPorts, err := client.ParsePortForwardSpec(cf.LocalForwardPorts)
+	if err != nil {
+		return nil, err
+	}
+
+	// prep client config:
+	return &client.Config{
+		Stdout:             os.Stdout,
+		Stderr:             os.Stderr,
+		Stdin:              os.Stdin,
+		Username:           cf.Username,
+		ProxyHostPort:      cf.Proxy,
+		Host:               cf.UserHost,
+		HostPort:           int(cf.NodePort),
+		HostLogin:          hostLogin,
+		Labels:             labels,
+		KeyTTL:             time.Minute * time.Duration(cf.MinsToLive),
+		InsecureSkipVerify: cf.InsecureSkipVerify,
+		LocalForwardPorts:  fPorts,
+		ConnectorID:        cf.ExternalAuth,
+		SiteName:           cf.SiteName,
+		Interactive:        cf.Interactive,
+	}, nil
+}

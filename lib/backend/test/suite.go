@@ -19,6 +19,7 @@ limitations under the License.
 package test
 
 import (
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -241,4 +242,30 @@ func toSet(vals []string) map[string]struct{} {
 		out[v] = struct{}{}
 	}
 	return out
+}
+
+func (s *BackendSuite) DuplicatedKeysInBuckets(c *C) {
+	const keyNum = 5
+	keys := make([]string, keyNum)
+	for i := 0; i < keyNum; i++ {
+		key := fmt.Sprintf("key-%v", i)
+		value := fmt.Sprintf("value-%v", i)
+		c.Assert(s.B.UpsertVal([]string{"a", "b"}, key, []byte(value), 0), IsNil)
+		keys[i] = key
+	}
+	checkExists := func (keyPool []string, target string) bool {
+		for _, k := range keyPool {
+			if k == target {
+				return true
+			}
+		}
+		return false
+	}
+
+	allKeys, err := s.B.GetKeys([]string{"a", "b"})
+	c.Assert(err, IsNil)
+	c.Assert(len(allKeys), Equals, keyNum)
+	for _, k := range allKeys {
+		c.Assert(checkExists(keys, k), Equals, true)
+	}
 }
