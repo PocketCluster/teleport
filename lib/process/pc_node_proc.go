@@ -1,7 +1,6 @@
 package process
 
 import (
-    "os"
     "time"
     "sync"
 
@@ -300,36 +299,4 @@ func (p *PocketNodeProcess) RequestSignedCertificateWithAuthServer(token string,
             authClient.Close()
         }
     })
-}
-
-// --- Node Process Test Starter --- //
-
-func StartNodeTeleport(authServerAddr, authToken string, debug bool) error {
-    cfg, err := service.MakeNodeConfig(authServerAddr, authToken, debug)
-    if err != nil {
-        log.Error(err.Error())
-        return trace.Wrap(err, "error in initializing teleport")
-    }
-    // add temporary token
-    srv, err := NewNodeProcess(cfg)
-    if err != nil {
-        log.Error(err.Error())
-        return trace.Wrap(err, "error in initializing teleport")
-    }
-    if err := srv.Start(); err != nil {
-        log.Error(err.Error())
-        return trace.Wrap(err, "starting teleport")
-    }
-    // create the pid file
-    if cfg.PIDFile != "" {
-        f, err := os.OpenFile(cfg.PIDFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-        if err != nil {
-            log.Error(err.Error())
-            return trace.Wrap(err, "failed to create the PID file")
-        }
-        log.Info(f, "%v", os.Getpid())
-        defer f.Close()
-    }
-    srv.Wait()
-    return nil
 }

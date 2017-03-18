@@ -2,13 +2,13 @@ package sqlitebk
 
 import (
     "database/sql"
+    "fmt"
     "os"
     "path/filepath"
     "sort"
     "sync"
     "time"
 
-    _ "github.com/mattn/go-sqlite3"
     "github.com/gravitational/trace"
     "github.com/mailgun/timetools"
 )
@@ -16,9 +16,10 @@ import (
 type SQLiteBackend struct {
     sync.Mutex
 
-    db    *sql.DB
-    clock timetools.TimeProvider
-    locks map[string]time.Time
+    onExitCloseDB bool
+    db            *sql.DB
+    clock         timetools.TimeProvider
+    locks         map[string]time.Time
 }
 
 // Option sets functional options for the backend
@@ -30,6 +31,26 @@ func Clock(clock timetools.TimeProvider) Option {
         b.clock = clock
         return nil
     }
+}
+
+func NewBackendFromDB(db *sql.DB, opts ...Option) (*SQLiteBackend, error) {
+    if db == nil {
+        return nil, trace.Wrap(fmt.Errorf("Invalid, null database"))
+    }
+    b := &SQLiteBackend {
+        onExitCloseDB: false,
+        locks: make(map[string]time.Time),
+    }
+    for _, option := range opts {
+        if err := option(b); err != nil {
+            return nil, trace.Wrap(err)
+        }
+    }
+    if b.clock == nil {
+        b.clock = &timetools.RealTime{}
+    }
+    b.db = db
+    return b, nil
 }
 
 func New(path string, opts ...Option) (*SQLiteBackend, error) {
@@ -46,6 +67,7 @@ func New(path string, opts ...Option) (*SQLiteBackend, error) {
         return nil, trace.BadParameter("path '%v' should be a valid directory", dir)
     }
     b := &SQLiteBackend {
+        onExitCloseDB: true,
         locks: make(map[string]time.Time),
     }
     for _, option := range opts {
@@ -66,7 +88,10 @@ func New(path string, opts ...Option) (*SQLiteBackend, error) {
 
 // Close releases the resources taken up by this backend
 func (sb *SQLiteBackend) Close() error {
-    return sb.db.Close()
+    if sb.onExitCloseDB {
+        return sb.db.Close()
+    }
+    return nil
 }
 
 // GetKeys returns a list of keys for a given path

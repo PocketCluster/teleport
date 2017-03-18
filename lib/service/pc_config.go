@@ -1,8 +1,12 @@
 package service
 
 import (
+    "database/sql"
+
     "github.com/gravitational/teleport"
     "github.com/gravitational/teleport/lib/defaults"
+
+    "github.com/cloudflare/cfssl/certdb"
     "github.com/stkim1/pcrypto"
 )
 
@@ -19,6 +23,9 @@ type NodeProperty struct {
 
 type CoreProperty struct {
     *pcrypto.CaSigner
+    CertStorage certdb.Accessor
+    // TODO : (03/18/2017) this need to be removed when CFSSL is incorporated. As of now, certdb's engine is private
+    BackendDB *sql.DB
 }
 
 // Config structure is used to initialize _all_ services PocketCluster & Teleporot can run.

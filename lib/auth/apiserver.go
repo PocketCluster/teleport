@@ -35,6 +35,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/gravitational/trace"
 	"github.com/julienschmidt/httprouter"
+	"github.com/cloudflare/cfssl/certdb"
 	"github.com/stkim1/pcrypto"
 )
 
@@ -43,8 +44,11 @@ type APIConfig struct {
 	SessionService    session.Service
 	PermissionChecker PermissionChecker
 	AuditLog          events.IAuditLog
-	// added for pocket cert issues
+
+	// (03/16/17) added for pocket cert issues
 	CertSigner 	      *pcrypto.CaSigner
+	// (03/19/17) added for storing certificates
+	CertStorage	      certdb.Accessor
 }
 
 // APIServer implements http API server for AuthServer interface
@@ -127,6 +131,8 @@ func NewAPIServer(config *APIConfig, role teleport.Role) APIServer {
 	srv.GET("/v1/sessions/:id/stream", srv.getSessionChunk)
 	srv.GET("/v1/sessions/:id/events", httplib.MakeHandler(srv.getSessionEvents))
 
+/*
+	(03/17/17) OIDC connecter is disabled as we don't provide user identity as of now
 	// OIDC stuff
 	srv.POST("/v1/oidc/connectors", httplib.MakeHandler(srv.upsertOIDCConnector))
 	srv.GET("/v1/oidc/connectors", httplib.MakeHandler(srv.getOIDCConnectors))
@@ -134,6 +140,7 @@ func NewAPIServer(config *APIConfig, role teleport.Role) APIServer {
 	srv.DELETE("/v1/oidc/connectors/:id", httplib.MakeHandler(srv.deleteOIDCConnector))
 	srv.POST("/v1/oidc/requests/create", httplib.MakeHandler(srv.createOIDCAuthRequest))
 	srv.POST("/v1/oidc/requests/validate", httplib.MakeHandler(srv.validateOIDCAuthCallback))
+*/
 
 	// Provisioning tokens
 	srv.GET("/v1/tokens", httplib.MakeHandler(srv.getTokens))

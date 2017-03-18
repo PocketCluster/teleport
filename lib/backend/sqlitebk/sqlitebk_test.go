@@ -7,6 +7,7 @@ import (
     "github.com/gravitational/teleport/lib/backend/test"
     "github.com/gravitational/teleport/lib/utils"
 
+    _ "github.com/mattn/go-sqlite3"
     . "gopkg.in/check.v1"
 )
 

@@ -66,6 +66,7 @@ func fullBucketPath(bucketPath []string) string {
 func fullPrimaryKey(path, key string) string {
     return path + pcPKSplitter + key
 }
+
 // check if every table in the list exits
 func checkTablesExist(sb *SQLiteBackend, table string) error {
     var (

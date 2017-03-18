@@ -2,21 +2,17 @@
 package process
 
 import (
-    "crypto/tls"
     "fmt"
     "net"
-    //"net/http"
     "path/filepath"
     "os"
     "sync"
     "time"
-    "io/ioutil"
 
     "github.com/gravitational/teleport"
     "github.com/gravitational/teleport/lib/utils"
     "github.com/gravitational/teleport/lib/auth"
     "github.com/gravitational/teleport/lib/auth/native"
-    "github.com/gravitational/teleport/lib/config"
     "github.com/gravitational/teleport/lib/defaults"
     "github.com/gravitational/teleport/lib/events"
     "github.com/gravitational/teleport/lib/session"
@@ -28,7 +24,6 @@ import (
     "github.com/gravitational/teleport/lib/reversetunnel"
     "github.com/gravitational/teleport/lib/srv"
     "github.com/gravitational/teleport/lib/service"
-    //"github.com/gravitational/teleport/lib/web"
 
     log "github.com/Sirupsen/logrus"
     "github.com/gravitational/trace"
@@ -43,6 +38,7 @@ func NewCoreProcess(cfg *service.PocketConfig) (*PocketCoreProcess, error) {
         return nil, trace.Wrap(err, "Configuration error")
     }
 
+    //TODO : remove this as it is not necessary
     // create the data directory if it's missing
     _, err := os.Stat(cfg.DataDir)
     if os.IsNotExist(err) {
@@ -52,16 +48,11 @@ func NewCoreProcess(cfg *service.PocketConfig) (*PocketCoreProcess, error) {
         }
     }
 
+    // TODO : host uuid should be generated from config and handed it to here.
     // if there's no host uuid initialized yet, try to read one from the
     // one of the identities
     cfg.HostUUID, err = utils.ReadHostUUID(cfg.DataDir)
     if err != nil {
-/*
-        TODO : need to look into IsNotFound Error to see what really happens
-        if !trace.IsNotFound(err) {
-            return nil, trace.Wrap(err)
-        }
-*/
         if len(cfg.Identities) != 0 {
             cfg.HostUUID = cfg.Identities[0].ID.HostUUID
             log.Infof("[INIT] taking host uuid from first identity: %v", cfg.HostUUID)
@@ -93,6 +84,7 @@ func NewCoreProcess(cfg *service.PocketConfig) (*PocketCoreProcess, error) {
         Config:     cfg,
     }
 
+    // NOTE : this is a good place where CFSSL plugs in
     if cfg.Keygen == nil {
         cfg.Keygen = native.New()
     }
@@ -116,35 +108,13 @@ type PocketCoreProcess struct {
     localAuth *auth.AuthServer
 }
 
-func (p *PocketCoreProcess) findStaticIdentity(id auth.IdentityID) (*auth.Identity, error) {
-    for i := range p.Config.Identities {
-        identity := p.Config.Identities[i]
-        if identity.ID.Equals(id) {
-            return identity, nil
-        }
-    }
-    return nil, trace.NotFound("identity %v not found", &id)
-}
-
 // connectToAuthService attempts to login into the auth servers specified in the
 // configuration. Returns 'true' if successful
 func (p *PocketCoreProcess) connectToAuthService(role teleport.Role) (*service.Connector, error) {
     id := auth.IdentityID{HostUUID: p.Config.HostUUID, Role: role}
-    identity, err := auth.ReadIdentity(p.Config.DataDir, id)
+    identity, err := auth.ReadIdentityFromCertStorage(p.Config.CertStorage, id)
     if err != nil {
-        if trace.IsNotFound(err) {
-            // try to locate static identity provide in the file
-            identity, err = p.findStaticIdentity(id)
-            if err != nil {
-                return nil, trace.Wrap(err)
-            }
-            log.Infof("found static identity %v in the config file, writing to disk", &id)
-            if err = auth.WriteIdentity(p.Config.DataDir, identity); err != nil {
-                return nil, trace.Wrap(err)
-            }
-        } else {
-            return nil, trace.Wrap(err)
-        }
+        return nil, trace.Wrap(err)
     }
 
     authUser := identity.Cert.ValidPrincipals[0]
@@ -206,8 +176,8 @@ func (p *PocketCoreProcess) initAuthStorage() (backend.Backend, error) {
     case teleport.BoltBackendType:
         bk, err = boltbk.FromJSON(cfg.KeysBackend.Params)
     case teleport.SQLiteBackendType:
-        // TODO : we need to pass sqlite instance instead of json param
-        bk, err = sqlitebk.FromJSON(cfg.KeysBackend.Params)
+        // when backend is sqlite, we use db instance rather
+        bk, err = sqlitebk.NewBackendFromDB(p.Config.BackendDB)
     default:
         return nil, trace.Errorf("unsupported backend type: %v", cfg.KeysBackend.Type)
     }
@@ -231,6 +201,7 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
         return trace.Wrap(err)
     }
 
+    // TODO : Disable audit for release
     // create the audit log, which will be consuming (and recording) all events
     // and record sessions
     var auditLog events.IAuditLog
@@ -245,23 +216,26 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
     }
 
     // first, create the AuthServer
-    authServer, identity, err := auth.Init(auth.InitConfig{
-        Backend:         b,
-        Authority:       authority,
-        DomainName:      cfg.Auth.DomainName,
-        AuthServiceName: cfg.Hostname,
-        DataDir:         cfg.DataDir,
-        HostUUID:        cfg.HostUUID,
-        Authorities:     cfg.Auth.Authorities,
-        ReverseTunnels:  cfg.ReverseTunnels,
-        OIDCConnectors:  cfg.OIDCConnectors,
-        Trust:           cfg.Trust,
-        Lock:            cfg.Lock,
-        Presence:        cfg.Presence,
-        Provisioner:     cfg.Provisioner,
-        Identity:        cfg.Identity,
-        StaticTokens:    cfg.Auth.StaticTokens,
-    }, cfg.SeedConfig)
+    authServer, identity, err := auth.PocketAuthInit(
+        auth.InitConfig{
+            Backend:         b,
+            Authority:       authority,
+            DomainName:      cfg.Auth.DomainName,
+            AuthServiceName: cfg.Hostname,
+            DataDir:         cfg.DataDir,
+            HostUUID:        cfg.HostUUID,
+            Authorities:     cfg.Auth.Authorities,
+            ReverseTunnels:  cfg.ReverseTunnels,
+            OIDCConnectors:  cfg.OIDCConnectors,
+            Trust:           cfg.Trust,
+            Lock:            cfg.Lock,
+            Presence:        cfg.Presence,
+            Provisioner:     cfg.Provisioner,
+            Identity:        cfg.Identity,
+            StaticTokens:    cfg.Auth.StaticTokens,
+        },
+        p.Config.CertStorage,
+        cfg.SeedConfig)
     if err != nil {
         return trace.Wrap(err)
     }
@@ -280,6 +254,7 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
         PermissionChecker: auth.NewStandardPermissions(),
         AuditLog:          auditLog,
         CertSigner:        p.Config.CaSigner,
+        CertStorage:       p.Config.CertStorage,
     }
 
     limiter, err := limiter.NewLimiter(cfg.Auth.Limiter)
@@ -376,56 +351,12 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
     return nil
 }
 
-// initSelfSignedHTTPSCert generates and self-signs a TLS key+cert pair for https connection
-// to the proxy server.
-func initSelfSignedHTTPSCert(cfg *service.PocketConfig) (err error) {
-    log.Warningf("[CONFIG] NO TLS Keys provided, using self signed certificate")
-
-    keyPath := filepath.Join(cfg.DataDir, defaults.SelfSignedKeyPath)
-    certPath := filepath.Join(cfg.DataDir, defaults.SelfSignedCertPath)
-
-    cfg.Proxy.TLSKey = keyPath
-    cfg.Proxy.TLSCert = certPath
-
-    // return the existing pair if they ahve already been generated:
-    _, err = tls.LoadX509KeyPair(certPath, keyPath)
-    if err == nil {
-        return nil
-    }
-    if !os.IsNotExist(err) {
-        return trace.Wrap(err, "unrecognized error reading certs")
-    }
-    log.Warningf("[CONFIG] Generating self signed key and cert to %v %v", keyPath, certPath)
-
-    creds, err := utils.GenerateSelfSignedCert([]string{cfg.Hostname, "localhost"})
-    if err != nil {
-        return trace.Wrap(err)
-    }
-
-    if err := ioutil.WriteFile(keyPath, creds.PrivateKey, 0600); err != nil {
-        return trace.Wrap(err, "error writing key PEM")
-    }
-    if err := ioutil.WriteFile(certPath, creds.Cert, 0600); err != nil {
-        return trace.Wrap(err, "error writing key PEM")
-    }
-    return nil
-}
-
 // initProxy gets called if teleport runs with 'proxy' role enabled.
 // this means it will do two things:
 //    1. serve a web UI
 //    2. proxy SSH connections to nodes running with 'node' role
 //    3. take care of revse tunnels
 func (p *PocketCoreProcess) initProxy() error {
-    // TODO : (11/28/2016) TLS Certificate should be generated in pc-core context initiation
-    // if no TLS key was provided for the web UI, generate a self signed cert
-    if p.Config.Proxy.TLSKey == "" && !p.Config.Proxy.DisableWebUI {
-        err := initSelfSignedHTTPSCert(p.Config)
-        if err != nil {
-            return trace.Wrap(err)
-        }
-    }
-
     p.RegisterWithAuthServer(p.Config.Token, teleport.RoleProxy, service.ProxyIdentityEvent)
 
     p.RegisterFunc(func() error {
@@ -470,31 +401,15 @@ func (p *PocketCoreProcess) RegisterWithAuthServer(token string, role teleport.R
                 time.Sleep(retryTime)
                 continue
             }
-/*
-            TODO : need to look into IsNotFound Error to see what really happens
-            if !trace.IsNotFound(err) {
-                return trace.Wrap(err)
-            }
-*/
-            //  we haven't connected yet, so we expect the token to exist
-            if p.getLocalAuth() != nil {
-                // Auth service is on the same host, no need to go though the invitation
-                // procedure
-                log.Debugf("[Node] this server has local Auth server started, using it to add role to the cluster")
-                err = auth.LocalRegister(cfg.DataDir, identityID, p.getLocalAuth())
-            } else {
-                // Auth server is remote, so we need a provisioning token
-                if token == "" {
-                    return trace.BadParameter("%v must join a cluster and needs a provisioning token", role)
-                }
-                log.Infof("[Node] %v joining the cluster with a token %v", role, token)
-                err = auth.Register(cfg.DataDir, token, identityID, cfg.AuthServers)
-            }
+            // Auth service is on the same host, no need to go though the invitation procedure
+            // This is the place where proxy certificate is generated and stored
+            log.Debugf("[Node] this server has local Auth server started, using it to add role to the cluster")
+            err = auth.LocalRegisterWithCertStorage(p.getLocalAuth(), cfg.CertStorage, identityID)
             if err != nil {
-                utils.Consolef(cfg.Console, "[%v] failed to join the cluster: %v", role, err)
+                log.Debugf("[%v] failed to join the cluster: %v", role, err)
                 time.Sleep(retryTime)
             } else {
-                utils.Consolef(cfg.Console, "[%v] Successfully registered with the cluster", role)
+                log.Debugf("[%v] Successfully registered with the cluster", role)
                 continue
             }
         }
@@ -549,15 +464,8 @@ func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
         return trace.Wrap(err)
     }
 
-    // Register reverse tunnel agents pool
-    agentPool, err := reversetunnel.NewAgentPool(reversetunnel.AgentPoolConfig{
-        HostUUID:    conn.Identity.ID.HostUUID,
-        Client:      conn.Client,
-        HostSigners: []ssh.Signer{conn.Identity.KeySigner},
-    })
-    if err != nil {
-        return trace.Wrap(err)
-    }
+    // (03/17/17)
+    // ReverseTunnel AgentPool is removed as it is unnecessary to connect remote cluster
 
     // register SSH reverse tunnel server that accepts connections
     // from remote teleport nodes
@@ -576,48 +484,8 @@ func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
         return nil
     })
 
-    // Register web proxy server
-    var webListener net.Listener
-    // TODO : (03/14/2017) this is now removed from user login flow. Delete this when it is fine to do so
-/*
-    p.RegisterFunc(func() error {
-        utils.Consolef(cfg.Console, "[PROXY] Web proxy service is starting on %v", cfg.Proxy.WebAddr.Addr)
-        webHandler, err := web.NewPocketHandler(
-            web.Config{
-                Proxy:       tsrv,
-                AssetsDir:   cfg.Proxy.AssetsDir,
-                AuthServers: cfg.AuthServers[0],
-                DomainName:  cfg.Hostname,
-                ProxyClient: conn.Client,
-                DisableUI:   cfg.Proxy.DisableWebUI,
-            })
-        if err != nil {
-            utils.Consolef(cfg.Console, "[PROXY] error in starting the web server: %v", err)
-            return trace.Wrap(err)
-        }
-        defer webHandler.Close()
-
-        proxyLimiter.WrapHandle(webHandler)
-        p.BroadcastEvent(service.Event{Name: service.ProxyWebServerEvent, Payload: webHandler})
-
-        log.Infof("[PROXY] init TLS listeners")
-        webListener, err = utils.ListenTLS(
-            cfg.Proxy.WebAddr.Addr,
-            cfg.Proxy.TLSCert,
-            cfg.Proxy.TLSKey)
-        if err != nil {
-            return trace.Wrap(err)
-        }
-        if err = http.Serve(webListener, proxyLimiter); err != nil {
-            if askedToExit {
-                log.Infof("[PROXY] web server exited")
-                return nil
-            }
-            log.Error(err)
-        }
-        return nil
-    })
-*/
+    // (03/17/17)
+    // Web Proxy server is removed as it is unnecessary to provide web proxy
 
     // Register ssh proxy server
     p.RegisterFunc(func() error {
@@ -633,53 +501,11 @@ func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
         return nil
     })
 
-    p.RegisterFunc(func() error {
-        log.Infof("[PROXY] starting reverse tunnel agent pool")
-        if err := agentPool.Start(); err != nil {
-            log.Fatalf("failed to start: %v", err)
-            return trace.Wrap(err)
-        }
-        agentPool.Wait()
-        return nil
-    })
-
     // execute this when process is asked to exit:
     p.onExit(func(payload interface{}) {
         tsrv.Close()
         SSHProxy.Close()
-        agentPool.Stop()
-        if webListener != nil {
-            webListener.Close()
-        }
         log.Infof("[PROXY] proxy service exited")
     })
-    return nil
-}
-
-// --- Core Process Test Starter --- //
-
-func StartCoreProcessTest(cfg *service.PocketConfig, debug bool) error {
-    // add static tokens
-    for _, token := range []config.StaticToken{"node:d52527f9-b260-41d0-bb5a-e23b0cfe0f8f", "node:c9s93fd9-3333-91d3-9999-c9s93fd98f43"} {
-        roles, tokenValue, err := token.Parse()
-        if err != nil {
-            log.Error(err.Error())
-            return trace.Wrap(err)
-        }
-        cfg.Auth.StaticTokens = append(cfg.Auth.StaticTokens, services.ProvisionToken{Token: tokenValue, Roles: roles, Expires: time.Unix(0, 0)})
-    }
-
-    // add temporary token
-    srv, err := NewCoreProcess(cfg)
-    if err != nil {
-        log.Error(err.Error())
-        return trace.Wrap(err, "initializing teleport")
-    }
-
-    if err := srv.Start(); err != nil {
-        log.Error(err.Error())
-        return trace.Wrap(err, "starting teleport")
-    }
-    srv.Wait()
     return nil
 }
