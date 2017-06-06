@@ -12,9 +12,6 @@ const ForeverTTL time.Duration = 0
 const SSHAuthSock = "SSH_AUTH_SOCK"
 
 const (
-	// SQLiteBackendType is a SQLite backend
-	SQLiteBackendType = "sqlite"
-
 	// BoltBackendType is a BoltDB backend
 	BoltBackendType = "bolt"
 

@@ -34,15 +34,14 @@ func enhanceWithPocketAPI(srv *APIServer, config *APIConfig) {
     srv.certSigner = config.CertSigner
 
     srv.POST(fmt.Sprintf("/%s/%s/%s", PocketApiVersion, PocketCertificate, PocketRequestSigned), httplib.MakeHandler(srv.issueSignedCertificatewithToken))
-    srv.POST(fmt.Sprintf("/%s/%s/%s", PocketApiVersion, PocketUserSignup, PocketSignupToken), httplib.MakeHandler(srv.releaseSignupToken))
+    srv.POST(fmt.Sprintf("/%s/%s/%s", PocketApiVersion, PocketUserSignup,  PocketSignupToken),   httplib.MakeHandler(srv.releaseSignupToken))
 }
 
 type signedCertificateReq struct {
-    Token    string        `json:"token"`
-    HostID   string        `json:"hostid"`
-    Hostname string        `json:"hostname"`
-    IP4Addr  string        `json:"ip4addr"`
-    Role     teleport.Role `json:"role"`
+    Token       string           `json:"token"`
+    Hostname    string           `json:"hostname"`
+    HostUUID    string           `json:"hostuuid"`
+    Role        teleport.Role    `json:"role"`
 }
 
 func (s *APIServer) issueSignedCertificatewithToken(w http.ResponseWriter, r *http.Request, _ httprouter.Params) (interface{}, error) {

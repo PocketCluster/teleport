@@ -1,5 +1,5 @@
 // +build darwin
-package process
+package embed
 
 import (
     "fmt"
@@ -23,6 +23,7 @@ import (
     "github.com/gravitational/teleport/lib/reversetunnel"
     "github.com/gravitational/teleport/lib/srv"
     "github.com/gravitational/teleport/lib/service"
+    pervice "github.com/stkim1/pc-core/service"
 
     log "github.com/Sirupsen/logrus"
     "github.com/gravitational/trace"
@@ -31,14 +32,14 @@ import (
 
 // NewTeleport takes the daemon configuration, instantiates all required services
 // and starts them under a supervisor, returning the supervisor object
-func NewCoreProcess(cfg *service.PocketConfig) (*PocketCoreProcess, error) {
+func NewEmbeddedCoreProcess(sup pervice.ServiceSupervisor, cfg *service.PocketConfig) (*EmbeddedCoreProcess, error) {
     if err := service.ValidateCoreConfig(cfg); err != nil {
         return nil, trace.Wrap(err, "Configuration error")
     }
 
-    // (04/13/2017)
-    // 1. cfg.DataDir is removed as it should be done in context initialization
-    // 2. host uuid should be generated from config and handed it to here.
+// (04/13/2017)
+// 1. cfg.DataDir is removed as it should be done in context initialization
+// 2. host uuid should be generated from config and handed it to here.
 /*
     //TODO : remove this as it is not necessary
     // create the data directory if it's missing
@@ -86,9 +87,9 @@ func NewCoreProcess(cfg *service.PocketConfig) (*PocketCoreProcess, error) {
     // try to login into the auth service:
 
     // if there are no certificates, use self signed
-    process := &PocketCoreProcess{
-        Supervisor: service.NewSupervisor(),
-        Config:     cfg,
+    process := &EmbeddedCoreProcess{
+        ServiceSupervisor:   sup,
+        config:          cfg,
     }
 
     // NOTE : this is a good place where CFSSL plugs in
@@ -106,26 +107,25 @@ func NewCoreProcess(cfg *service.PocketConfig) (*PocketCoreProcess, error) {
 
 // TeleportProcess structure holds the state of the Teleport daemon, controlling
 // execution and configuration of the teleport services: ssh, auth and proxy.
-type PocketCoreProcess struct {
+type EmbeddedCoreProcess struct {
     sync.Mutex
-    service.Supervisor
-    Config *service.PocketConfig
+    pervice.ServiceSupervisor
+    config    *service.PocketConfig
     // localAuth has local auth server listed in case if this process
     // has started with auth server role enabled
     localAuth *auth.AuthServer
 }
 
-
-func (p *PocketCoreProcess) Close() error {
-    p.BroadcastEvent(service.Event{Name: service.TeleportExitEvent})
+func (p *EmbeddedCoreProcess) Close() error {
+    p.BroadcastEvent(pervice.Event{Name: service.TeleportExitEvent})
     return trace.Wrap(p.localAuth.Close())
 }
 
 // connectToAuthService attempts to login into the auth servers specified in the
 // configuration. Returns 'true' if successful
-func (p *PocketCoreProcess) connectToAuthService(role teleport.Role) (*service.Connector, error) {
-    id := auth.IdentityID{HostUUID: p.Config.HostUUID, Role: role}
-    identity, err := auth.ReadIdentityFromCertStorage(p.Config.CertStorage, id)
+func (p *EmbeddedCoreProcess) connectToAuthService(role teleport.Role) (*service.Connector, error) {
+    id := auth.IdentityID{HostUUID: p.config.HostUUID, Role: role}
+    identity, err := auth.ReadIdentityFromCertStorage(p.config.CertStorage, id)
     if err != nil {
         return nil, trace.Wrap(err)
     }
@@ -133,7 +133,7 @@ func (p *PocketCoreProcess) connectToAuthService(role teleport.Role) (*service.C
     authUser := identity.Cert.ValidPrincipals[0]
     authClient, err := auth.NewTunClient(
         string(role),
-        p.Config.AuthServers,
+        p.config.AuthServers,
         authUser,
         []ssh.AuthMethod{ssh.PublicKeys(identity.KeySigner)},
     )
@@ -153,24 +153,25 @@ func (p *PocketCoreProcess) connectToAuthService(role teleport.Role) (*service.C
     return &service.Connector{Client: authClient, Identity: identity}, nil
 }
 
-func (p *PocketCoreProcess) setLocalAuth(a *auth.AuthServer) {
+func (p *EmbeddedCoreProcess) setLocalAuth(a *auth.AuthServer) {
     p.Lock()
     defer p.Unlock()
     p.localAuth = a
 }
 
-func (p *PocketCoreProcess) getLocalAuth() (a *auth.AuthServer) {
+func (p *EmbeddedCoreProcess) getLocalAuth() (a *auth.AuthServer) {
     p.Lock()
     defer p.Unlock()
     return p.localAuth
 }
 
+// TODO check if this is necessary for broader implementation
 // onExit allows individual services to register a callback function which will be
 // called when Teleport Process is asked to exit. Usually services terminate themselves
 // when the callback is called
-func (p *PocketCoreProcess) onExit(callback func(interface{})) {
+func (p *EmbeddedCoreProcess) onExit(callback func(interface{})) {
     go func() {
-        eventC := make(chan service.Event)
+        eventC := make(chan pervice.Event)
         p.WaitForEvent(service.TeleportExitEvent, eventC, make(chan struct{}))
         select {
         case event := <-eventC:
@@ -180,8 +181,8 @@ func (p *PocketCoreProcess) onExit(callback func(interface{})) {
 }
 
 // initAuthStorage initializes the storage backend for the auth. service
-func (p *PocketCoreProcess) initAuthStorage() (backend.Backend, error) {
-    cfg := &p.Config.Auth
+func (p *EmbeddedCoreProcess) initAuthStorage() (backend.Backend, error) {
+    cfg := &p.config.Auth
     var bk backend.Backend
     var err error
 
@@ -190,7 +191,7 @@ func (p *PocketCoreProcess) initAuthStorage() (backend.Backend, error) {
         bk, err = boltbk.FromJSON(cfg.KeysBackend.Params)
     case teleport.SQLiteBackendType:
         // when backend is sqlite, we use db instance rather
-        bk, err = sqlitebk.NewBackendFromDB(p.Config.BackendDB)
+        bk, err = sqlitebk.NewBackendFromDB(p.config.BackendDB)
     default:
         return nil, trace.Errorf("unsupported backend type: %v", cfg.KeysBackend.Type)
     }
@@ -202,12 +203,12 @@ func (p *PocketCoreProcess) initAuthStorage() (backend.Backend, error) {
 }
 
 // initAuthService can be called to initialize auth server service
-func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
+func (p *EmbeddedCoreProcess) initAuthService(authority auth.Authority) error {
     var (
         askedToExit = false
         err         error
     )
-    cfg := p.Config
+    cfg := p.config
     // Initialize the storage back-ends for keys, events and records
     b, err := p.initAuthStorage()
     if err != nil {
@@ -247,7 +248,7 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
             Identity:        cfg.Identity,
             StaticTokens:    cfg.Auth.StaticTokens,
         },
-        p.Config.CertStorage,
+        p.config.CertStorage,
         cfg.SeedConfig)
     if err != nil {
         return trace.Wrap(err)
@@ -266,8 +267,8 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
         SessionService:    sessionService,
         PermissionChecker: auth.NewStandardPermissions(),
         AuditLog:          auditLog,
-        CertSigner:        p.Config.CaSigner,
-        CertStorage:       p.Config.CertStorage,
+        CertSigner:        p.config.CaSigner,
+        CertStorage:       p.config.CertStorage,
     }
 
     limiter, err := limiter.NewLimiter(cfg.Auth.Limiter)
@@ -278,7 +279,7 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
     // Register an SSH endpoint which is used to create an SSH tunnel to send HTTP
     // requests to the Auth API
     var authTunnel *auth.AuthTunnel
-    p.RegisterFunc(func() error {
+    p.RegisterServiceFunc(func() error {
         utils.Consolef(cfg.Console, "[AUTH]  Auth service is starting on %v", cfg.Auth.SSHAddr.Addr)
         authTunnel, err = auth.NewTunnel(
             cfg.Auth.SSHAddr,
@@ -301,7 +302,7 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
         return nil
     })
 
-    p.RegisterFunc(func() error {
+    p.RegisterServiceFunc(func() error {
         // Heart beat auth server presence, this is not the best place for this
         // logic, consolidate it into auth package later
         connector, err := p.connectToAuthService(teleport.RoleAdmin)
@@ -309,26 +310,26 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
             return trace.Wrap(err)
         }
         // External integrations rely on this event:
-        p.BroadcastEvent(service.Event{Name: service.AuthIdentityEvent, Payload: connector})
+        p.BroadcastEvent(pervice.Event{Name: service.AuthIdentityEvent, Payload: connector})
         p.onExit(func(payload interface{}) {
             connector.Client.Close()
         })
         return nil
     })
 
-    p.RegisterFunc(func() error {
+    p.RegisterServiceFunc(func() error {
         srv := services.Server{
-            ID:       p.Config.HostUUID,
+            ID:       p.config.HostUUID,
             Addr:     cfg.Auth.SSHAddr.Addr,
-            Hostname: p.Config.Hostname,
+            Hostname: p.config.Hostname,
         }
         host, port, err := net.SplitHostPort(srv.Addr)
         // advertise-ip is explicitly set:
-        if p.Config.AdvertiseIP != nil {
+        if p.config.AdvertiseIP != nil {
             if err != nil {
                 return trace.Wrap(err)
             }
-            srv.Addr = fmt.Sprintf("%v:%v", p.Config.AdvertiseIP.String(), port)
+            srv.Addr = fmt.Sprintf("%v:%v", p.config.AdvertiseIP.String(), port)
         } else {
             // advertise-ip is not set, while the CA is listening on 0.0.0.0? lets try
             // to guess the 'advertise ip' then:
@@ -369,11 +370,11 @@ func (p *PocketCoreProcess) initAuthService(authority auth.Authority) error {
 //    1. serve a web UI
 //    2. proxy SSH connections to nodes running with 'node' role
 //    3. take care of revse tunnels
-func (p *PocketCoreProcess) initProxy() error {
-    p.RegisterWithAuthServer(p.Config.Token, teleport.RoleProxy, service.ProxyIdentityEvent)
+func (p *EmbeddedCoreProcess) initProxy() error {
+    p.RegisterWithAuthServer(p.config.Token, teleport.RoleProxy, service.ProxyIdentityEvent)
 
-    p.RegisterFunc(func() error {
-        eventsC := make(chan service.Event)
+    p.RegisterServiceFunc(func() error {
+        eventsC := make(chan pervice.Event)
         p.WaitForEvent(service.ProxyIdentityEvent, eventsC, make(chan struct{}))
 
         event := <-eventsC
@@ -390,8 +391,8 @@ func (p *PocketCoreProcess) initProxy() error {
 // RegisterWithAuthServer uses one time provisioning token obtained earlier
 // from the server to get a pair of SSH keys signed by Auth server host
 // certificate authority
-func (p *PocketCoreProcess) RegisterWithAuthServer(token string, role teleport.Role, eventName string) {
-    cfg := p.Config
+func (p *EmbeddedCoreProcess) RegisterWithAuthServer(token string, role teleport.Role, eventName string) {
+    cfg := p.config
     identityID := auth.IdentityID{Role: role, HostUUID: cfg.HostUUID}
 
     log.Infof("RegisterWithAuthServer role %s cfg.HostUUID %s", role, cfg.HostUUID)
@@ -400,12 +401,12 @@ func (p *PocketCoreProcess) RegisterWithAuthServer(token string, role teleport.R
     // the registering client that attempts to connect to the auth server
     // and provision the keys
     var authClient *auth.TunClient
-    p.RegisterFunc(func() error {
+    p.RegisterServiceFunc(func() error {
         retryTime := defaults.ServerHeartbeatTTL / 3
         for {
             connector, err := p.connectToAuthService(role)
             if err == nil {
-                p.BroadcastEvent(service.Event{Name: eventName, Payload: connector})
+                p.BroadcastEvent(pervice.Event{Name: eventName, Payload: connector})
                 authClient = connector.Client
                 return nil
             }
@@ -435,12 +436,12 @@ func (p *PocketCoreProcess) RegisterWithAuthServer(token string, role teleport.R
     })
 }
 
-func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
+func (p *EmbeddedCoreProcess) initProxyEndpoint(conn *service.Connector) error {
     var (
         askedToExit = true
         err         error
     )
-    cfg := p.Config
+    cfg := p.config
     proxyLimiter, err := limiter.NewLimiter(cfg.Proxy.Limiter)
     if err != nil {
         return trace.Wrap(err)
@@ -462,12 +463,12 @@ func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
         return trace.Wrap(err)
     }
 
-    SSHProxy, err := srv.New(cfg.Proxy.SSHAddr,
+    SSHProxy, err := srv.NewPocketSSHServer(cfg.Proxy.SSHAddr,
         cfg.Hostname,
+        cfg.HostUUID,
         []ssh.Signer{conn.Identity.KeySigner},
         conn.Client,
-        cfg.DataDir,
-        nil,
+        nil, // TODO : we need to insert AdvertiseIP here
         srv.SetLimiter(proxyLimiter),
         srv.SetProxyMode(tsrv),
         srv.SetSessionServer(conn.Client),
@@ -482,14 +483,14 @@ func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
 
     // register SSH reverse tunnel server that accepts connections
     // from remote teleport nodes
-    p.RegisterFunc(func() error {
+    p.RegisterServiceFunc(func() error {
         utils.Consolef(cfg.Console, "[PROXY] Reverse tunnel service is starting on %v", cfg.Proxy.ReverseTunnelListenAddr.Addr)
         if err := tsrv.Start(); err != nil {
             utils.Consolef(cfg.Console, "[PROXY] Error: %v", err)
             return trace.Wrap(err)
         }
         // notify parties that we've started reverse tunnel server
-        p.BroadcastEvent(service.Event{Name: service.ProxyReverseTunnelServerEvent, Payload: tsrv})
+        p.BroadcastEvent(pervice.Event{Name: service.ProxyReverseTunnelServerEvent, Payload: tsrv})
         tsrv.Wait()
         if askedToExit {
             log.Infof("[PROXY] Reverse tunnel exited")
@@ -501,7 +502,7 @@ func (p *PocketCoreProcess) initProxyEndpoint(conn *service.Connector) error {
     // Web Proxy server is removed as it is unnecessary to provide web proxy
 
     // Register ssh proxy server
-    p.RegisterFunc(func() error {
+    p.RegisterServiceFunc(func() error {
         utils.Consolef(cfg.Console, "[PROXY] SSH proxy service is starting on %v", cfg.Proxy.SSHAddr.Addr)
         if err := SSHProxy.Start(); err != nil {
             if askedToExit {

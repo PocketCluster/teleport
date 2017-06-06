@@ -13,32 +13,42 @@ import (
     "github.com/cloudflare/cfssl/certdb"
     log "github.com/Sirupsen/logrus"
     "github.com/gravitational/trace"
+    "github.com/gravitational/teleport/lib/utils"
+
+    "github.com/stkim1/pcrypto"
 )
+
+func certAccessorPath(role teleport.Role) (string, string) {
+    var(
+        keyPath string  = fmt.Sprintf("%s%s%s", teleport.PocketClusterCertPrefix, strings.ToLower(string(role)), pcrypto.FileExtPrivateKey)
+        certPath string = fmt.Sprintf("%s%s%s", teleport.PocketClusterCertPrefix, strings.ToLower(string(role)), pcrypto.FileExtCertificate)
+    )
+    return keyPath, certPath
+}
 
 // ReadIdentity reads, parses and returns the given pub/pri key + cert from the
 // key storage (dataDir).
 func ReadIdentityFromCertStorage(certStorage certdb.Accessor, id IdentityID) (i *Identity, err error) {
     var (
-        kp string = fmt.Sprintf("%s.key", strings.ToLower(string(id.Role)))
-        cp string = fmt.Sprintf("%s.cert", strings.ToLower(string(id.Role)))
+        keyPath, certPath string = certAccessorPath(id.Role)
     )
-    log.Debugf("[AUTH] ReadIdentityFromCertStorage, host identity: [key: %v, cert: %v]", kp, cp)
+    log.Debugf("[AUTH] ReadIdentityFromCertStorage, host identity: [key: %v, cert: %v]", keyPath, certPath)
 
-    key, err := certStorage.GetCertificate(kp, id.HostUUID)
+    key, err := certStorage.GetCertificate(keyPath, id.HostUUID)
     if err != nil {
         return nil, trace.Wrap(err)
     }
     if len(key) == 0 {
-        return nil, trace.NotFound("Unable to find key %v from certificate storage", kp)
+        return nil, trace.NotFound("Unable to find key %v from certificate storage", keyPath)
     }
     keyBytes := []byte(key[0].PEM)
 
-    cert, err := certStorage.GetCertificate(cp, id.HostUUID)
+    cert, err := certStorage.GetCertificate(certPath, id.HostUUID)
     if err != nil {
         return nil, trace.Wrap(err)
     }
     if len(cert) == 0 {
-        return nil, trace.NotFound("Unable to find certificate %v from storage", cp)
+        return nil, trace.NotFound("Unable to find certificate %v from storage", certPath)
     }
     certBytes := []byte(cert[0].PEM)
 
@@ -50,18 +60,17 @@ func ReadIdentityFromCertStorage(certStorage certdb.Accessor, id IdentityID) (i 
 // If a certificate exists on disk, it is read in and returned.
 func initKeysWithCertStorage(a *AuthServer, certStorage certdb.Accessor, id IdentityID) (*Identity, error) {
     var (
-        kp string = fmt.Sprintf("%s.key", strings.ToLower(string(id.Role)))
-        cp string = fmt.Sprintf("%s.cert", strings.ToLower(string(id.Role)))
+        keyPath, certPath string = certAccessorPath(id.Role)
         keyBytes, certBytes []byte = nil, nil
     )
-    log.Debugf("[AUTH] initKeysWithCertStorage, host : [key: %v, cert: %v]", kp, cp)
+    log.Debugf("[AUTH] initKeysWithCertStorage, host : [key: %v, cert: %v]", keyPath, certPath)
 
-    key, kerr := certStorage.GetCertificate(kp, id.HostUUID)
+    key, kerr := certStorage.GetCertificate(keyPath, id.HostUUID)
     if kerr == nil && len(key) != 0 {
         keyBytes = []byte(key[0].PEM)
     }
 
-    cert, cerr := certStorage.GetCertificate(cp, id.HostUUID)
+    cert, cerr := certStorage.GetCertificate(certPath, id.HostUUID)
     if cerr == nil && len(cert) != 0 {
         certBytes = []byte(cert[0].PEM)
     }
@@ -75,7 +84,7 @@ func initKeysWithCertStorage(a *AuthServer, certStorage certdb.Accessor, id Iden
         // save key
         err = certStorage.InsertCertificate(certdb.CertificateRecord{
             PEM:        string(packedKeys.Key),
-            Serial:     kp,
+            Serial:     keyPath,
             AKI:        id.HostUUID,
             Status:     "good",
             Reason:     0,
@@ -87,7 +96,7 @@ func initKeysWithCertStorage(a *AuthServer, certStorage certdb.Accessor, id Iden
         // save cert
         err = certStorage.InsertCertificate(certdb.CertificateRecord{
             PEM:        string(packedKeys.Cert),
-            Serial:     cp,
+            Serial:     certPath,
             AKI:        id.HostUUID,
             Status:     "good",
             Reason:     0,
@@ -226,4 +235,21 @@ func PocketAuthInit(cfg InitConfig, certStorage certdb.Accessor, seedConfig bool
         return nil, nil, trace.Wrap(err)
     }
     return asrv, identity, nil
+}
+
+// ReadIdentity reads, parses and returns the given pub/pri key + cert from the key storage (dataDir) for slave node.
+func NodeReadIdentityFromFile(keyFilePath, certFilePath string, id IdentityID) (i *Identity, err error) {
+    log.Debugf("host identity: [key: %v, cert: %v]", keyFilePath, certFilePath)
+
+    keyBytes, err := utils.ReadPath(keyFilePath)
+    if err != nil {
+        return nil, trace.Wrap(err)
+    }
+
+    certBytes, err := utils.ReadPath(certFilePath)
+    if err != nil {
+        return nil, trace.Wrap(err)
+    }
+
+    return ReadIdentityFromKeyPair(keyBytes, certBytes)
 }

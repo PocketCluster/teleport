@@ -30,10 +30,10 @@ func issueSignedCertificateWithToken(a *AuthWithRoles, certSigner *pcrypto.CaSig
     if len(req.Hostname) == 0 {
         return nil, trace.BadParameter("Hostname cannot be empty")
     }
-    if len(req.HostID) == 0 {
+    if len(req.HostUUID) == 0 {
         return nil, trace.BadParameter("HostID cannot be empty")
     }
-    log.Infof("[AUTH] Node `%v`[%v] requests a signed certificate", req.Hostname, req.HostID)
+    log.Infof("[AUTH] Node `%v`[%v] requests a signed certificate", req.Hostname, req.HostUUID)
     if err := req.Role.Check(); err != nil {
         return nil, trace.Wrap(err)
     }
@@ -78,7 +78,7 @@ func createSignedCertificate(certSigner *pcrypto.CaSigner, req *signedCertificat
     if err != nil {
         return nil, trace.Wrap(err)
     }
-    c, err := certSigner.GenerateSignedCertificate(req.Hostname, req.IP4Addr, k)
+    c, err := certSigner.GenerateSignedCertificate(req.Hostname, "", k)
     if err != nil {
         log.Warningf("[AUTH] Node `%v` cannot receive a signed certificate : cert generation error. %v", req.Hostname, err)
         return nil, trace.Wrap(err)

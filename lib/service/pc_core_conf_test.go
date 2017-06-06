@@ -3,11 +3,11 @@ package service
 
 import (
     "fmt"
+    "os"
 
     "github.com/gravitational/teleport/lib/defaults"
     "github.com/gravitational/teleport/lib/utils"
 
-    "github.com/stkim1/pc-core/context"
     . "gopkg.in/check.v1"
 )
 
@@ -25,21 +25,17 @@ func (s *PocketConfigSuite) TearDownSuite(c *C) {
 }
 
 func (s *PocketConfigSuite) SetUpTest(c *C) {
-    context.DebugContextPrepare()
-
-    dataDir, _ := context.SharedHostContext().ApplicationUserDataDirectory()
-    s.dataDir = dataDir + "/teleport"
-    c.Logf("[INFO] User DataDir %s", dataDir)
+    s.dataDir = c.MkDir()
+    c.Logf("[INFO] User DataDir %s", s.dataDir)
 }
 
 func (s *PocketConfigSuite) TearDownTest(c *C) {
-    context.DebugContextDestroy()
-
+    os.RemoveAll(s.dataDir)
     s.dataDir = ""
 }
 
 func (s *PocketConfigSuite) TestDefaultConfig(c *C) {
-    config := MakeCoreConfig(true)
+    config := MakeCoreConfig(s.dataDir, true)
     c.Assert(config, NotNil)
 
     // all 3 services should be enabled by default
@@ -47,7 +43,7 @@ func (s *PocketConfigSuite) TestDefaultConfig(c *C) {
     c.Assert(config.SSH.Enabled, Equals, false)
     c.Assert(config.Proxy.Enabled, Equals, true)
     // FIXME : check if this is necessary for up and running server
-    c.Assert(config.Proxy.DisableWebUI, Equals, false)
+    c.Assert(config.Proxy.DisableWebUI, Equals, true)
 
     localAuthAddr := utils.NetAddr{AddrNetwork: "tcp", Addr: "0.0.0.0:3025"}
     localProxyAddr := utils.NetAddr{AddrNetwork: "tcp", Addr: "0.0.0.0:3023"}

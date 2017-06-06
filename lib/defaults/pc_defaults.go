@@ -1,6 +1,9 @@
 package defaults
 
 const (
+    // Default Host Name
+    CoreHostName string = "pc-master"
+
     // Default DB to use for persisting state. Another options is "etcd"
     CoreBackendType = "sqlite"
 

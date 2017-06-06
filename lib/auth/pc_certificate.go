@@ -10,59 +10,62 @@ import (
 
 type PocketCertParam struct {
     // AuthServers is a list of auth servers nodes, proxies and peer auth servers connect to
-    AuthServers []utils.NetAddr
+    AuthServers           []utils.NetAddr
+    // Host role
+    Role                  teleport.Role
     // Hostname is a node host name
-    Hostname        string
-    // network ip address of current host
-    IP4Addr         string
+    Hostname              string
+    // HostUUID is a unique host id
+    HostUUID              string
+    // AuthToken
+    AuthToken             string
     // docker ca pub path
-    DockerAuthFile  string
+    AuthorityCertFile     string
     // docker Key file path
-    DockerKeyFile   string
+    NodeEngineKeyFile     string
     // docker cert file path
-    DockerCertFile  string
+    NodeEngineCertFile    string
 }
 
 // RequestSignedCertificate is used by auth service clients (other services, like proxy or SSH) when a new node joins
 // the cluster
-func RequestSignedCertificate(certParam *PocketCertParam, id IdentityID, token string) error {
-    tok, err := readToken(token)
+func RequestSignedCertificate(param *PocketCertParam) error {
+    tok, err := readToken(param.AuthToken)
     if err != nil {
         return trace.Wrap(err)
     }
-    method, err := NewTokenAuth(id.HostUUID, tok)
+    method, err := NewTokenAuth(param.HostUUID, tok)
     if err != nil {
         return trace.Wrap(err)
     }
 
-    var servers []utils.NetAddr = certParam.AuthServers
+    var servers []utils.NetAddr = param.AuthServers
     client, err := NewTunClient(
         "auth.client.cert.reqsigned",
         servers,
-        id.HostUUID,
+        param.HostUUID,
         method)
     if err != nil {
         return trace.Wrap(err)
     }
     defer client.Close()
 
-    keys, err := requestSignedCertificateWithToken(client, tok, id.HostUUID, certParam.Hostname, certParam.IP4Addr, id.Role)
+    keys, err := requestSignedCertificateWithToken(client, tok, param.Hostname, param.HostUUID, param.Role)
     if err != nil {
         return trace.Wrap(err)
     }
-    return writeDockerKeyAndCert(certParam, keys)
+    return writeDockerKeyAndCert(param, keys)
 }
 
 // requestSignedCertificateWithToken calls the auth service API to register a new node via registration token which has
 // been previously issued via GenerateToken
-func requestSignedCertificateWithToken(c *TunClient, token, hostID, hostname, ip4Addr string, role teleport.Role) (*packedAuthKeyCert, error) {
+func requestSignedCertificateWithToken(c *TunClient, token, hostName, hostUUID string, role teleport.Role) (*packedAuthKeyCert, error) {
     out, err := c.PostJSON(apiEndpoint(PocketCertificate, PocketRequestSigned),
         signedCertificateReq{
-            Token:      token,
-            HostID:     hostID,
-            Hostname:   hostname,
-            IP4Addr:    ip4Addr,
-            Role:       role,
+            Token:       token,
+            Hostname:    hostName,
+            HostUUID:    hostUUID,
+            Role:        role,
         })
     if err != nil {
         return nil, trace.Wrap(err)

@@ -2,7 +2,7 @@
 
 echo "Remove local settings..."
 
-rm -rf ${HOME}/.pocket ${HOME}/.tsh && mkdir -p ${HOME}/.pocket/teleport
+rm -rf ${HOME}/.pocket ${HOME}/.tsh && mkdir -p ${HOME}/.pocket
 
 TARGET_HOST=${1}
 if [[ -z ${TARGET_HOST} ]]; then

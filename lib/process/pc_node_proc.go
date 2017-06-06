@@ -2,8 +2,6 @@ package process
 
 import (
     "time"
-    "sync"
-
     "github.com/gravitational/teleport"
     "github.com/gravitational/teleport/lib/auth"
     "github.com/gravitational/teleport/lib/defaults"
@@ -42,12 +40,13 @@ func NewNodeProcess(cfg *service.PocketConfig) (*PocketNodeProcess, error) {
 // TeleportProcess structure holds the state of the Teleport daemon, controlling
 // execution and configuration of the teleport services: ssh, auth and proxy.
 type PocketNodeProcess struct {
-    sync.Mutex
     service.Supervisor
     Config *service.PocketConfig
-    // localAuth has local auth server listed in case if this process
-    // has started with auth server role enabled
-    localAuth *auth.AuthServer
+}
+
+func (p *PocketNodeProcess) Close() error {
+    p.BroadcastEvent(service.Event{Name: service.TeleportExitEvent})
+    return nil
 }
 
 func (p *PocketNodeProcess) findStaticIdentity(id auth.IdentityID) (*auth.Identity, error) {
@@ -242,14 +241,17 @@ func (p *PocketNodeProcess) RegisterWithAuthServer(token string, role teleport.R
 // from the server to get a pair of SSH keys signed by Auth server host
 // certificate authority
 func (p *PocketNodeProcess) RequestSignedCertificateWithAuthServer(token string, role teleport.Role, eventName string) {
-    cfg := p.Config
-    identityID := auth.IdentityID{Role: role, HostUUID: cfg.HostUUID}
+    var (
+        cfg = p.Config
+        token = p.Config.Token
+        authClient *auth.TunClient = nil
+    )
+
     log.Infof("RequestSignedCertificateWithAuthServer role %s cfg.HostUUID %s", role, cfg.HostUUID)
 
     // this means the server has not been initialized yet, we are starting
     // the registering client that attempts to connect to the auth server
     // and provision the keys
-    var authClient *auth.TunClient
     p.RegisterFunc(func() error {
         retryTime := defaults.ServerHeartbeatTTL / 3
         for {
@@ -277,13 +279,15 @@ func (p *PocketNodeProcess) RequestSignedCertificateWithAuthServer(token string,
             log.Infof("[Node] %v requesting a signed certificate with a token %v", role, token)
             err = auth.RequestSignedCertificate(
                 &auth.PocketCertParam{
-                    AuthServers:        cfg.AuthServers,
-                    Hostname:           cfg.Hostname,
-                    DockerCertFile:     cfg.DockerCertFile,
-                    DockerKeyFile:      cfg.DockerAuthFile,
-                    DockerAuthFile:     cfg.DockerAuthFile,
-                },
-                identityID, token)
+                    AuthServers:          cfg.AuthServers,
+                    Role:                 role,
+                    Hostname:             cfg.Hostname,
+                    HostUUID:             cfg.HostUUID,
+                    AuthToken:            token,
+                    AuthorityCertFile:    cfg.AuthorityCertFile,
+                    NodeEngineCertFile:   cfg.NodeEngineCertFile,
+                    NodeEngineKeyFile:    cfg.NodeEngineKeyFile,
+                })
             if err != nil {
                 utils.Consolef(cfg.Console, "[%v] failed to receive a signed certificate : %v", role, err)
                 time.Sleep(retryTime)

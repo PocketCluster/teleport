@@ -3,47 +3,14 @@ package main
 import (
     "github.com/gravitational/teleport"
     "github.com/gravitational/teleport/lib/auth"
-    "github.com/gravitational/teleport/lib/defaults"
     "github.com/gravitational/teleport/lib/service"
     "github.com/gravitational/teleport/lib/services"
-    "github.com/gravitational/teleport/lib/utils"
-    "github.com/gravitational/trace"
+    "github.com/gravitational/teleport/embed"
 
     log "github.com/Sirupsen/logrus"
     "github.com/stkim1/pc-core/context"
     "golang.org/x/crypto/ssh"
 )
-
-// connectToAuthService creates a valid client connection to the auth service
-func connectToAuthService(cfg *service.Config) (client *auth.TunClient, err error) {
-    // connect to the local auth server by default:
-    cfg.Auth.Enabled = true
-    if len(cfg.AuthServers) == 0 {
-        cfg.AuthServers = []utils.NetAddr{
-            *defaults.AuthConnectAddr(),
-        }
-    }
-    id, err := auth.ReadIdentity(cfg.DataDir, auth.IdentityID{HostUUID: cfg.HostUUID, Role: teleport.RoleAdmin})
-    if err != nil {
-        return nil, trace.Wrap(err)
-    }
-    authUser := id.Cert.ValidPrincipals[0]
-    client, err = auth.NewTunClient(
-        "api.user-creation",
-        cfg.AuthServers,
-        authUser,
-        []ssh.AuthMethod{ssh.PublicKeys(id.KeySigner)},
-    )
-    if err != nil {
-        return nil, trace.Wrap(err)
-    }
-    // check connectivity by calling something on a clinet:
-    _, err = client.GetDialer()()
-    if err != nil {
-        return nil, trace.Wrap(err, "Cannot connect to the auth server: %v.\nIs the auth server running on %v?", err, cfg.AuthServers[0].Addr)
-    }
-    return client, nil
-}
 
 func createSignupToken(client *auth.TunClient, login string) (string, error) {
     user := services.TeleportUser{
@@ -56,7 +23,7 @@ func createSignupToken(client *auth.TunClient, login string) (string, error) {
 func createUser() {
     context.DebugContextPrepare()
     cfg := service.MakeCoreConfig(true)
-    clt, err := connectToAuthService(&cfg.Config)
+    clt, err := embed.OpenAdminClientWithAuthService(&cfg.Config)
     if err != nil {
         log.Error(err.Error())
         return
@@ -150,7 +117,7 @@ func create_user_old() {
 func delet_user(login string) {
     context.DebugContextPrepare()
     cfg := service.MakeCoreConfig(true)
-    clt, err := connectToAuthService(&cfg.Config)
+    clt, err := embed.OpenAdminClientWithAuthService(&cfg.Config)
     if err != nil {
         log.Error(err.Error())
         return

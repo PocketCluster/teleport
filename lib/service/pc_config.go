@@ -12,13 +12,17 @@ import (
 
 type NodeProperty struct {
     // network ip address of current host
-    IP4Addr    string
+    IP4Addr                string
     // docker ca pub path
-    DockerAuthFile string
+    AuthorityCertFile      string
     // docker Key file path
-    DockerKeyFile string
+    NodeEngineKeyFile      string
     // docker cert file path
-    DockerCertFile string
+    NodeEngineCertFile     string
+    // node ssh certificate
+    NodeSSHCertificateFile string
+    // node ssh private key
+    NodeSSHPrivateKeyFile  string
 }
 
 type CoreProperty struct {

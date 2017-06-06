@@ -1,38 +1,38 @@
 package service
 
 import (
-    "errors"
+    "net"
     "os"
     "io/ioutil"
-    "path/filepath"
-
-    "github.com/gravitational/teleport/lib/utils"
-    "github.com/gravitational/teleport/lib/defaults"
-    
-    "github.com/stkim1/pc-node-agent/slcontext"
-    slconfig "github.com/stkim1/pc-node-agent/slcontext/config"
 
     log "github.com/Sirupsen/logrus"
     "github.com/gravitational/trace"
+    "github.com/gravitational/teleport/lib/utils"
+    "github.com/gravitational/teleport/lib/defaults"
+
+    "github.com/stkim1/pc-node-agent/slcontext"
+    slconfig "github.com/stkim1/pc-node-agent/slcontext/config"
 )
 
 // MakeDefaultConfig creates a new Config structure and populates it with defaults
-func MakeNodeConfig(authServerAddr, authToken string, debug bool) (*PocketConfig, error) {
+func MakeNodeConfig(context slcontext.PocketSlaveContext, debug bool) (*PocketConfig, error) {
     config := &PocketConfig{}
-    err := applyNodeDefaults(config, slcontext.SharedSlaveContext(), authServerAddr, authToken, debug)
+    err := applyNodeDefaults(config, context, debug)
     return config, err
 }
 
 // applyDefaults applies default values to the existing config structure
-func applyNodeDefaults(cfg *PocketConfig, context slcontext.PocketSlaveContext, authServerAddr, authToken string, debug bool) error {
+func applyNodeDefaults(cfg *PocketConfig, context slcontext.PocketSlaveContext, debug bool) error {
+    authServerAddr, err := slcontext.SharedSlaveContext().GetMasterIP4Address()
+    if err != nil {
+        log.Errorf(err.Error())
+        return trace.Wrap(err)
+    }
     addr, err := utils.ParseHostPortAddr(authServerAddr, int(defaults.AuthListenPort))
     if err != nil {
         return trace.Wrap(err)
     }
     log.Infof("Using auth server: %v", addr.FullAddress())
-    if len(authToken) == 0 {
-        return trace.Wrap(errors.New("[ERR] Invalid AuthToken"))
-    }
     // dataDir should have been created before pcteleport is executed
     dataDir := context.SlaveConfigPath()
     // check if the path exists and report error if absent
@@ -52,16 +52,18 @@ func applyNodeDefaults(cfg *PocketConfig, context slcontext.PocketSlaveContext, 
         return trace.Wrap(err)
     }
     // get current network interface address
-    iface, err := context.PrimaryNetworkInterface()
+    netif, err := slcontext.PrimaryNetworkInterface()
     if err != nil {
         // TODO if this keeps fail, we'll enforce to get current interface
         log.Errorf("Failed to determine network interface: %v", err)
         return trace.Wrap(err)
     }
-    // TODO : read host UUID from slave context
-    // if there's no host uuid initialized yet, try to read one from the
-    // one of the identities
     hostUUID, err := context.GetSlaveNodeUUID()
+    if err != nil {
+        log.Errorf(err.Error())
+        return trace.Wrap(err)
+    }
+    authToken, err := context.GetSlaveAuthToken()
     if err != nil {
         log.Errorf(err.Error())
         return trace.Wrap(err)
@@ -101,14 +103,15 @@ func applyNodeDefaults(cfg *PocketConfig, context slcontext.PocketSlaveContext, 
     defaults.ConfigureLimiter(&cfg.SSH.Limiter)
 
     cfg.Hostname        = nodeName
-    cfg.DataDir         = dataDir
-
-    cfg.IP4Addr         = iface.IP.String()
-    cfg.DockerAuthFile  = filepath.Join(keyCertDir, slconfig.SlaveDockerAuthFileName)
-    cfg.DockerKeyFile   = filepath.Join(keyCertDir, slconfig.SlaveDockerKeyFileName)
-    cfg.DockerCertFile  = filepath.Join(keyCertDir, slconfig.SlaveDockerCertFileName)
-
     cfg.HostUUID        = hostUUID
+    cfg.DataDir         = dataDir
+    cfg.AdvertiseIP     = net.ParseIP(netif.PrimaryIP4Addr())
+
+    cfg.AuthorityCertFile      = slconfig.SlaveAuthCertFileName
+    cfg.NodeEngineKeyFile      = slconfig.SlaveEngineKeyFileName
+    cfg.NodeEngineCertFile     = slconfig.SlaveEngineCertFileName
+    cfg.NodeSSHCertificateFile = slconfig.SlaveSSHCertificateFileName
+    cfg.NodeSSHPrivateKeyFile  = slconfig.SlaveSSHPrivateKeyFileName
 
     // if user did not provide auth domain name, use this host UUID
     if cfg.Auth.Enabled && cfg.Auth.DomainName == "" {
