@@ -61,7 +61,7 @@ func main() {
     if err != nil {
         log.Panic(err)
     }
-    err = service.ValidateCoreConfig(cfg)
+    err = service.ValidateMasterConfig(cfg)
     if err != nil {
         log.Panic(err)
     }

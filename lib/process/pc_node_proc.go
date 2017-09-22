@@ -243,7 +243,6 @@ func (p *PocketNodeProcess) RegisterWithAuthServer(token string, role teleport.R
 func (p *PocketNodeProcess) RequestSignedCertificateWithAuthServer(token string, role teleport.Role, eventName string) {
     var (
         cfg = p.Config
-        token = p.Config.Token
         authClient *auth.TunClient = nil
     )
 

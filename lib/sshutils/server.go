@@ -217,6 +217,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	for {
 		select {
+		// (2017-06-15) handles server closure. (stkim1: this closure case should terminate accepting connections onward)
+		case <-s.closeC: {
+			log.Infof("[SSH:%v] server shutting down", s.component)
+			connClosed()
+			return
+		}
 		// handle out of band ssh requests
 		case req := <-reqs:
 			if req == nil {

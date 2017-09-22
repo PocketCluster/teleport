@@ -2,6 +2,8 @@ package service
 
 import (
     "database/sql"
+    "fmt"
+    "path/filepath"
 
     "github.com/gravitational/teleport"
     "github.com/gravitational/teleport/lib/defaults"
@@ -55,4 +57,10 @@ func (cfg *Config) ConfigureSQLite() {
     if a.RecordsBackend.Type == teleport.SQLiteBackendType {
         a.RecordsBackend.Params = sqliteParams(cfg.DataDir, defaults.RecordsBoltFile)
     }
+}
+
+// Generates a string accepted by the SqliteDB driver, like this:
+// `{"path": "/var/lib/teleport/records.db"}`
+func sqliteParams(storagePath, dbFile string) string {
+    return fmt.Sprintf(`{"path": "%s"}`, filepath.Join(storagePath, dbFile))
 }

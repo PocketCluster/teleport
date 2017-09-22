@@ -32,7 +32,7 @@ import (
 // NewTeleport takes the daemon configuration, instantiates all required services
 // and starts them under a supervisor, returning the supervisor object
 func NewCoreProcess(cfg *service.PocketConfig) (*PocketCoreProcess, error) {
-    if err := service.ValidateCoreConfig(cfg); err != nil {
+    if err := service.ValidateMasterConfig(cfg); err != nil {
         return nil, trace.Wrap(err, "Configuration error")
     }
 
