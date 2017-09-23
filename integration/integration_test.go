@@ -338,7 +338,7 @@ func (s *IntSuite) TestEnvironmentVariables(c *check.C) {
 	defer t.Stop(true)
 
 	testKey, testVal := "TELEPORT_TEST_ENV", "howdy"
-	cmd := []string{"echo", fmt.Sprintf("$%v", testKey)}
+	cmd := []string{"printenv", testKey}
 
 	// make sure sessions set run command
 	tc, err := t.NewClient(s.me.Username, Site, Host, t.GetPortSSHInt())
