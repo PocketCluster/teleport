@@ -99,7 +99,7 @@ func (s *AuthServer) CreateSignupToken(user services.User) (string, error) {
 		return "", trace.Wrap(err)
 	}
 
-	log.Infof("[AUTH API] created the signup token for %v as %v", user)
+	log.Infof("[AUTH API] created the signup token for %v", user)
 	return token, nil
 }
 

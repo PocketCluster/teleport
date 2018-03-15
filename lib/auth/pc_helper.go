@@ -3,7 +3,6 @@ package auth
 import (
     "fmt"
     "time"
-    "io/ioutil"
     "strings"
 
     log "github.com/Sirupsen/logrus"
@@ -27,20 +26,6 @@ func checkTokenTTL(s *AuthServer, token string) bool {
         return false
     }
     return true
-}
-
-func writeDockerKeyAndCert(certParam *PocketCertParam, keys *packedAuthKeyCert) error {
-    log.Debugf("write slave docker auth to %v, key to %v, cert from %v", certParam.AuthorityCertFile, certParam.NodeEngineKeyFile, certParam.NodeEngineCertFile)
-    if err := ioutil.WriteFile(certParam.AuthorityCertFile, keys.Auth, 0600); err != nil {
-        return err
-    }
-    if err := ioutil.WriteFile(certParam.NodeEngineKeyFile,  keys.Key, 0600); err != nil {
-        return err
-    }
-    if err := ioutil.WriteFile(certParam.NodeEngineCertFile, keys.Cert, 0600); err != nil {
-        return err
-    }
-    return nil
 }
 
 func apiEndpoint(params ...string) string {

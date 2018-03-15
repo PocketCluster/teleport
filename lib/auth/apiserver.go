@@ -49,12 +49,15 @@ type APIConfig struct {
 	CertSigner 	      *pcrypto.CaSigner
 	// (03/19/17) added for storing certificates
 	CertStorage	      certdb.Accessor
+	// (10/06/17) added for deliver user identity across cluster
+	UserKiosk         UserIdentityKiosk
 }
 
 // APIServer implements http API server for AuthServer interface
 type APIServer struct {
 	httprouter.Router
 	a AuthWithRoles
+	userKiosk  UserIdentityKiosk
 	certSigner *pcrypto.CaSigner
 }
 

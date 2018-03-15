@@ -56,6 +56,10 @@ func NewStandardPermissions() PermissionChecker {
 	sp.permissions[teleport.RoleProvisionToken] = map[string]bool{
 		ActionRegisterUsingToken:    true,
 		ActionRegisterNewAuthServer: true,
+
+		/* --- (2017/10/06) added for pocketcluster node provisioning --- */
+		ActionIssueSignedCertificateWithToken: true, // issue signed certificate
+		ActionDeliverUserIdentityWithToken:    true, // deliver user identity (the osx login user)
 	}
 
 	sp.permissions[teleport.RoleNode] = map[string]bool{
