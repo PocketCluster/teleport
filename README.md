@@ -1,122 +1,86 @@
-# Gravitational Teleport
+# Gravitational Teleport as MacOS Library  
 
-|Project Links| Description
-|---|----
-| [Teleport Website](http://gravitational.com/teleport)  | The official website of the project |
-| [Documentation](http://gravitational.com/teleport/docs/quickstart/)  | Admin guide, user manual and more |
-| [Demo Video](https://www.youtube.com/watch?v=7eVAC2U8OtM) | 3-minute video overview of the UI. |
-| [Teleconsole](http://www.teleconsole.com) | The free service to "invite" SSH clients behind NAT, built on top of Teleport |
-| [Blog](http://blog.gravitational.com) | Our blog where we publish Teleport news |
+|Project Links| Description  
+|---|----  
+| [Teleport Website](http://gravitational.com/teleport)  | The official website of the project |  
+| [Teleport Github](https://github.com/gravitational/teleport)  | The Github repository |  
 
-## Introduction
+## Introduction  
 
-Gravitational Teleport is a modern SSH server for remotely accessing clusters
-of Linux servers via SSH or HTTPS. It is intended to be used instead of `sshd`.
-Teleport enables teams to easily adopt the best SSH practices like:
+Teleport is a modern SSH service built by Gravitational for remotely accessing clusters of Linux servers via SSH. Teleport has many excellent features: the most unmentioned one of it all is to be built as a MacOS library (or any other platform for that matter).  
 
-- No need to distribute keys: Teleport uses certificate-based access with automatic expiration time.
-- Enforcement of 2nd factor authentication.
-- Cluster introspection: every Teleport node becomes a part of a cluster and is visible on the Web UI.
-- Record and replay SSH sessions for knowledge sharing and auditing purposes.
-- Collaboratively troubleshoot issues through session sharing.
-- Connect to clusters located behind firewalls without direct Internet access via SSH bastions.
-- Ability to integrate SSH credentials with your organization identities via OAuth (Google Apps, Github).
+[PocketCluster](https://github.com/PocketCluster/pc-osx-manager) is a MacOS cluster manager application which lets its users _"Click and Build"_ a SBC (Single Board Computer) cluster. The application needed a _cluster-wise_ internal service that could bond a MacOS master and several SBC slaves in a secure and reliable way; Teleport fitted in the role.  
 
-Teleport is built on top of the high-quality [Golang SSH](https://godoc.org/golang.org/x/crypto/ssh) 
-implementation and it is fully compatible with OpenSSH.
+## Building Teleport as Library  
 
-## Installing and Running
+Teleport source code consists of the actual Teleport service and client binary written in Golang. They are built into static library, and their symbols are exposed in `C` space.  
 
-Download the [latest binary release](https://github.com/gravitational/teleport/releases), 
-unpack the .tar.gz and run `sudo make install`. This will copy Teleport binaries into 
-`/usr/local/bin`.
+```sh
+#!/bin/bash
 
-Then you can run Teleport as a single-node cluster:
+# Exit if any command fails
+set -e
 
-```
-teleport start 
-```
+# Figure out where things are coming from and going to
+export GOROOT="/opt/go-1.7.6"
+export GOREPO=${GOREPO:-"${HOME}/Workspace/POCKETPKG"}
+export GOWORKPLACE=${GOWORKPLACE:-"${HOME}/Workspace/GOPLACE"}
+export GOPATH="${GOREPO}:${GOWORKPLACE}"
+export GO=${GOROOT}/bin/go
+export GG_BUILD="${PWD}/../../.build"
+export ARCHIVE="${GG_BUILD}/pc-core.a"
+#PATH=${PATH:-"$GEM_HOME/ruby/2.0.0/bin:$HOME/.util:$GOROOT/bin:$GOREPO/bin:$GOWORKPLACE/bin:$HOME/.util:$NATIVE_PATH"}
+export PATH="$GOROOT/bin:$GOREPO/bin:$GOWORKPLACE/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export VERBOSE=${VERBOSE:-0}
 
-## Building Teleport
+# Clean old directory
+if [ -d ${GG_BUILD} ]; then
+    rm -rf ${GG_BUILD} && mkdir -p ${GG_BUILD}
+fi
 
-Teleport source code consists of the actual Teleport daemon binary written in Golang, and also
-it has a web UI (located in /web directory) written in Javascript. The WebUI is not changed often
-and we keep it checked into Git under `/dist`, so you only need to build Golang:
+echo "--- --- --- --- --- --- --- --- --- --- --- --- GO ENVIRONMENTS --- --- --- --- --- --- --- --- --- --- --- ---"
+echo $(GO version)
+GO env
+echo "--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---"
 
-Make sure you have Golang `v1.7` or newer, then run:
+echo "Make the temp folders for go objects"
+mkdir -p ${GG_BUILD}
 
-1. `go get github.com/gravitational/teleport`
-2. `cd $GOPATH/src/github.com/gravitational/teleport`
-3. `CGO_ENABLED=true make`
+echo "Generate _cgo_export.h and copy into source folder"
+${GO} tool cgo -objdir ${GG_BUILD} native_*.go main.go
 
-If the build was successful the binaries are here: `$GOPATH/src/github.com/gravitational/teleport/build`
+echo "Compile and produce object files"
+# [Default mode] First trial
+#CGO_ENABLED=1 CC=clang ${GO} build -ldflags '-tmpdir '${GG_BUILD}' -linkmode external' ./...
 
-You'll have to create `/var/lib/teleport` directory and then you can start 
-Teleport as a single-node cluster in development mode: `build/teleport start -d`
+# [Default mode] External clang linker
+#CGO_ENABLED=1 CC=clang ${GO} build -v -x -ldflags '-v -tmpdir '${GG_BUILD}' -linkmode external -extld clang' ./...
 
-If you want to release your own Teleport version, edit this [Makefile](Makefile), update 
-`VERSION` and `SUFFIX` constants, then run `make setver` to update [version.go](version.go)
+# [Archive mode]
+#CGO_ENABLED=1 CC=clang ${GO} build -v -x -buildmode=c-archive -ldflags '-v -tmpdir '${GG_BUILD}' -linkmode external' ./...
 
-If you want to cut another binary release tarball, run `make release`.
+# [Shared mode] go.dwarf file
+#CGO_ENABLED=1 CC=clang ${GO} build -v -x -buildmode=c-shared -ldflags '-v -tmpdir '${GG_BUILD}' -linkmode external' ./...
 
-NOTE: The Go compiler is somewhat sensitive to amount of memory: you will need at least 1GB of 
-virtual memory to compile Teleport. 512MB instance without swap will not work.
+# [Archive mode] prevents go.dwarf generated (-w), strip symbol (-s)
+#CGO_ENABLED=1 CC=clang ${GO} build -v -x -buildmode=c-archive -ldflags '-v -w -s -tmpdir '${GG_BUILD}' -linkmode external' ./...
 
-### Rebuilding Web UI
+# [Default mode] default mode (we need main() function), disable go.dwarf generation (-w), strip symbol (-s)
+if [[ ${VERBOSE} -eq 1 ]]; then
+    CGO_ENABLED=1 CC=clang ${GO} build -v -x -ldflags '-v -s -w -tmpdir '${GG_BUILD}' -linkmode external' ./...
+else
+    # (2017/11/15) -v=2 link flag is added to unused method removal
+    # https://go-review.googlesource.com/c/go/+/20483
+    CGO_ENABLED=1 CC=clang ${GO} build -ldflags '-s -w -v=2 -tmpdir '${GG_BUILD}' -linkmode external' ./...
+fi
 
-If you want to make changes to the web UI, you have to re-build the content of `/dist` directory
-See [web/README.md](web/README.me) for instructions on how to update the Web UI.
-
-## Why did We Build Teleport?
-
-Mature tech companies with significant infrastructure footprints tend to implement most
-of these patterns internally. Teleport allows smaller companies without 
-significant in-house SSH expertise to easily adopt them, as well. Teleport comes with an 
-accessible Web UI and a very permissive [Apache 2.0](https://github.com/gravitational/teleport/blob/master/LICENSE)
-license to facilitate adoption and use.
-
-Being a complete standalone tool, Teleport can be used as a software library enabling 
-trust management in complex multi-cluster, multi-region scenarios across many teams 
-within multiple organizations.
-
-## More Information
-
-* [Quick Start Guide](docs/quickstart.md)
-* [Teleport Architecture](docs/architecture.md)
-* [Admin Manual](docs/admin-guide.md)
-* [User Manual](docs/user-manual.md)
-* [FAQ](docs/faq.md)
-
-## Contributing
-
-The best way to contribute is to create issues or pull requests right here on Github. 
-You can also reach the Gravitational team through their [website](https://gravitational.com/)
-
-It is possible to make changes to the Web UI without having to rebuild and restart `teleport`.
-Simply launch it with `DEBUG` environment variable set from `$GOPATH`:
-
-```bash
-$ DEBUG=1 $GOPATH/gravitational/teleport/build/teleport start
+echo "Combine the object files into a static library"
+ar rcs ${ARCHIVE} ${GG_BUILD}/*.o
+mv ${GG_BUILD}/_cgo_export.h ${GG_BUILD}/pc-core.h
+rm static*
+echo "${ARCHIVE} generated!"
 ```
 
+## Status  
 
-## Status
-
-Teleport has completed a security audit from a nationally recognized technology security company. 
-So we are comfortable with the use of Teleport from a security perspective.
-
-However, Teleport is still a relatively young product so you may experience usability issues. 
-We are actively supporting Teleport and addressing any issues that are submitted to this repo. Ask questions,
-send pull requests, report issues and don't be shy! :)
-
-The latest stable Teleport build can be found in [Releases](https://github.com/gravitational/teleport/releases)
-
-## Known Issues
-
-* Teleport does not officially support IPv6 yet.
-
-## Who Built Teleport?
-
-Teleport was created by [Gravitational Inc](https://gravitational.com). We have built Teleport 
-by borrowing from our previous experiences at Rackspace. It has been extracted from [Gravity](https://gravitational.com/product), our system for helping our clients to deploy 
-and remotely manage their SaaS applications on many cloud regions or even on-premise.
+This project is not maintained.  
